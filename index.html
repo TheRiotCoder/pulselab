@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en" data-theme="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta name="referrer" content="no-referrer">
+<title>PulseLab – private Garmin data analysis</title>
+<meta name="description" content="Offline, on-device analysis of your Garmin data export: readiness, sleep, HRV, training load and plain-language insights. Nothing leaves your device.">
+<meta name="theme-color" content="#0b1117">
+<meta name="color-scheme" content="dark light">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PulseLab">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="banners"></div>
+<header id="top">
+  <div class="brand"><svg viewBox="0 0 24 24" class="logo" aria-hidden="true"><path d="M2 13h5l2.5-7 4 13 2.5-6H22" /></svg><h1 id="title">PulseLab</h1></div>
+  <div id="range" class="seg" role="tablist" aria-label="Date range"></div>
+</header>
+<main id="view" tabindex="-1"><p class="loading">Loading…</p></main>
+<nav id="tabs" aria-label="Sections"></nav>
+<div id="modal" class="modal" hidden></div>
+<noscript><p class="loading">PulseLab needs JavaScript to run. It works fully offline and sends nothing anywhere.</p></noscript>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
