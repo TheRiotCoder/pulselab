@@ -203,9 +203,12 @@ await (await page.$('#file')).uploadFile(zipPath);
 ok(await waitFor(() => !!document.querySelector('#report'), 30000), 'import report appears');
 const rep = await text('#report'); console.log('    report:\n      ' + rep.replace(/\n+/g, '\n      ').slice(0, 900));
 await shot('09-import-report');
-const st = await page.evaluate(async () => { const s = await import('/js/state.js'); const days = [...s.S.daily.values()]; const acts = [...s.S.acts.values()]; return { nd: days.length, na: acts.length, first: days.map(d => d.date).sort()[0], last: days.map(d => d.date).sort().pop(), maxSteps: Math.max(...days.map(d => d.steps || 0)), withSleep: days.filter(d => d.sleepMin).length, withHrv: days.filter(d => d.hrv).length, withBb: days.filter(d => d.bbHigh != null).length, withReady: days.filter(d => d.garminReadiness).length, vo2: days.filter(d => d.vo2max).length, fitActs: acts.filter(a => a.hasSeries).length, dupAct: acts.find(a => a.id === 'g9000000'), run: acts.find(a => a.id === 'g9000006'), xss: acts.find(a => /onerror/.test(a.name)), demo: s.S.meta.demo, d0: days.find(d => d.date === '2026-06-13') }; });
+const st = await page.evaluate(async () => { const s = await import('/js/state.js'); const days = [...s.S.daily.values()]; const acts = [...s.S.acts.values()]; return { nd: days.length, na: acts.length, first: days.map(d => d.date).sort()[0], last: days.map(d => d.date).sort().pop(), maxSteps: Math.max(...days.map(d => d.steps || 0)), withSleep: days.filter(d => d.sleepMin).length, withHrv: days.filter(d => d.hrv).length, withBb: days.filter(d => d.bbHigh != null).length, noSteps: days.filter(d => !(d.steps > 0)).length, withStress: days.filter(d => d.stress > 0).length, withRhr: days.filter(d => d.rhr > 0).length, nestedStress: days.filter(d => d.sleepStress === 18).length, withReady: days.filter(d => d.garminReadiness).length, vo2: days.filter(d => d.vo2max).length, fitActs: acts.filter(a => a.hasSeries).length, dupAct: acts.find(a => a.id === 'g9000000'), run: acts.find(a => a.id === 'g9000006'), xss: acts.find(a => /onerror/.test(a.name)), demo: s.S.meta.demo, d0: days.find(d => d.date === '2026-06-13') }; });
 ok(st.nd === expect.nDays && st.first === expect.firstDay && st.last === expect.lastDay, `days imported: ${st.nd}/${expect.nDays}, ${st.first}..${st.last}`);
 ok(st.withSleep === 120 && st.withHrv === 120 && st.withBb === 120, `sleep/HRV/BodyBattery for all days (${st.withSleep}/${st.withHrv}/${st.withBb})`);
+ok(st.withStress === 120 && st.nestedStress > 25, `stress read for every day incl. nested allDayStress.aggregatorList (${st.withStress}/120, nested ${st.nestedStress})`);
+ok(st.noSteps === 0 && st.withRhr === 120, `later duplicate zero records did not overwrite steps/resting HR (days without steps: ${st.noSteps})`);
+ok(/Health status days/.test(rep) && !/No HRV found/.test(rep), 'import summary: HRV present, no "No HRV" warning');
 ok(st.withReady === 40 && st.vo2 === 12, `Garmin readiness (${st.withReady}) and VO2max (${st.vo2}) imported`);
 ok(st.maxSteps < 20000, 'Customer-Service folder was NOT parsed (max steps ' + st.maxSteps + ')');
 ok(st.na === expect.nActs, `activities: ${st.na}/${expect.nActs} (40 summaries + 1 FIT, duplicate FIT merged)`);
@@ -215,6 +218,7 @@ ok(st.run && Math.abs(st.run.distanceM - 8000) < 1 && Math.abs(st.run.durationSe
 ok(st.d0 && st.d0.sleepMin > 300 && Math.abs(st.d0.deepMin / st.d0.sleepMin - 0.17) < 0.01 && st.d0.sleepStart < st.d0.sleepEnd, 'sleep stages/timestamps parsed');
 ok(!st.demo, 'demo flag cleared after real import');
 ok(/not relevant/.test(rep) && /file\(s\) skipped/.test(rep), 'report mentions ignored + skipped (corrupt) files');
+await goto('#/sleep'); await sleep(400); { const e0 = errCount(); ok(/Overnight breathing/.test(await text('#view')) && await page.$('#c-resp svg') !== null && await page.$('#c-spo2 svg') !== null && e0 === errCount(), 'sleep view shows imported respiration + SpO2 charts'); }
 await goto('#/overview'); await sleep(300);
 ok(await page.$('.ring') !== null, 'overview works on imported data');
 await shot('10-imported-overview');
@@ -276,8 +280,20 @@ console.log('\n[13b] install banners');
   await ip.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   await ip.goto(BASE, { waitUntil: 'networkidle0' }); await sleep(1800);
   const t = await ip.$eval('#banners', e => e.innerText).catch(() => '');
-  ok(/Add to Home Screen/.test(t), 'iPhone UA shows Add to Home Screen instructions');
+  ok(/Add to Home Screen/.test(t) && /backup/i.test(t), 'iPhone UA (Safari, not standalone) shows Add to Home Screen instructions that mention taking a backup');
   await ip.screenshot({ path: path.join(SHOTS, '14-ios-install.png') }); await ip.close();
+}
+console.log('\n[13c] export without HRV');
+{
+  await goto('#/data'); await page.evaluate(async () => { const m = await import('/js/state.js'); await m.wipe(false); });
+  const nh = buildExport({ noHrv: true }); const p2 = path.join(DL, 'garmin-export-nohrv.zip'); fs.writeFileSync(p2, nh.zip);
+  await page.reload({ waitUntil: 'networkidle0' }); await goto('#/data');
+  await (await page.$('#file')).uploadFile(p2);
+  ok(await waitFor(() => !!document.querySelector('#report'), 30000), 'no-HRV import report appears');
+  ok(/No HRV found in this export/.test(await text('#rep-hrv')), 'import summary says "No HRV found in this export"');
+  await goto('#/overview'); await sleep(400); ok(/No HRV found in this export/.test(await text('#hrv-note')), 'Overview shows "No HRV found" note');
+  const bad = errCount(); await goto('#/heart'); await sleep(400); ok(/No HRV found in this export/.test(await text('#hrv-note')) && errCount() === bad, 'Heart shows the note and still renders resting HR');
+  await goto('#/insights'); await sleep(300); ok((await text('#view')).length > 100 && errCount() === bad, 'insights render without HRV');
 }
 console.log('\n[14] demo → restore of demo flag, final error check');
 await goto('#/data'); await page.evaluate(() => document.querySelector('#demo').click()); await waitFor(() => !!document.querySelector('.ring'), 20000);

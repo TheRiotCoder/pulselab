@@ -34,7 +34,7 @@ export function buildFit({ startEpochMs, seconds = 600, sport = 1, baseHr = 140 
 }
 
 // Deterministic data: 120 days ending 2026-10-10
-export function buildExport() {
+export function buildExport(opts = {}) {
   const N = 120, endKey = '2026-10-10';
   const addDays = (k, n) => { const [y, m, d] = k.split('-').map(Number); const dt = new Date(Date.UTC(y, m - 1, d + n)); return dt.toISOString().slice(0, 10); };
   const days = [...Array(N)].map((_, i) => addDays(endKey, -(N - 1 - i)));
@@ -44,7 +44,7 @@ export function buildExport() {
     const deep = h * 3600 * 0.17, rem = h * 3600 * 0.22, light = h * 3600 - deep - rem;
     const endMs = Date.parse(d + 'T07:00:00Z'), startMs = endMs - (h * 3600 + 1500) * 1000;
     sleep.push({ sleepStartTimestampGMT: new Date(startMs).toISOString().replace('Z', '').replace(/\.\d+$/, '.0'), sleepEndTimestampGMT: new Date(endMs).toISOString().replace('Z', '').replace(/\.\d+$/, '.0'), calendarDate: d, deepSleepSeconds: Math.round(deep), lightSleepSeconds: Math.round(light), remSleepSeconds: Math.round(rem), awakeSleepSeconds: 1500, unmeasurableSeconds: 0, averageRespiration: 14.2, avgSleepStress: 18, sleepScores: { overallScore: 78 }, retro: false });
-    uds.push({ uuid: 'u' + i, calendarDate: d, totalSteps: 7000 + (i % 7) * 500, restingHeartRate: 55 + (i % 4), averageStressLevel: 30 + (i % 9), totalKilocalories: 2200, moderateIntensityMinutes: 20, vigorousIntensityMinutes: 5, bodyBattery: { bodyBatteryStatList: [{ bodyBatteryStatType: 'HIGHEST', statsValue: 80 - (i % 10) }, { bodyBatteryStatType: 'LOWEST', statsValue: 20 + (i % 8) }] }, bodyBatteryChargedValue: 55, bodyBatteryDrainedValue: 60 });
+    uds.push({ uuid: 'u' + i, calendarDate: d, totalSteps: 7000 + (i % 7) * 500, restingHeartRate: 55 + (i % 4), ...(i % 4 === 1 ? { allDayStress: { aggregatorList: [{ type: 'TOTAL', averageStressLevel: 30 + (i % 9), maxStressLevel: 80 }, { type: 'ASLEEP', averageStressLevel: 18 }] } } : { averageStressLevel: 30 + (i % 9) }), totalKilocalories: 2200, moderateIntensityMinutes: 20, vigorousIntensityMinutes: 5, bodyBattery: { bodyBatteryStatList: [{ bodyBatteryStatType: 'HIGHEST', statsValue: 80 - (i % 10) }, { bodyBatteryStatType: 'LOWEST', statsValue: 20 + (i % 8) }] }, bodyBatteryChargedValue: 55, bodyBatteryDrainedValue: 60 });
     health.push({ calendarDate: d, metrics: [{ type: 'HRV', value: 55 + 8 * Math.sin(i / 6) }, { type: 'HEART_RATE', value: 52 }, { type: 'RESPIRATION', value: 14 }, { type: 'SPO2', value: 96 }] });
     if (i % 3 === 0) readiness.push({ calendarDate: d, level: 'HIGH', score: 70 + (i % 20), recoveryTime: 600, acuteLoad: 300 });
     if (i % 10 === 0) vo2.push({ calendarDate: d, vo2MaxValue: 48 + i / 50, sport: 'RUNNING' });
@@ -63,7 +63,8 @@ export function buildExport() {
   const J = o => strToU8(JSON.stringify(o));
   const files = {
     'DI_CONNECT/DI-Connect-Wellness/2026-06-13_2026-09-21_12345_sleepData.json': J(sleep),
-    'DI_CONNECT/DI-Connect-Wellness/2026-06-13_healthStatusData.json': J(health),
+    ...(opts.noHrv ? {} : { 'DI_CONNECT/DI-Connect-Wellness/2026-06-13_healthStatusData.json': J(health) }),
+    'DI_CONNECT/DI-Connect-Aggregator/UDSFile_2026-06-13_2026-10-10_overlap.json': J(uds.filter((_, i) => i % 5 === 0).map(u => ({ ...u, totalSteps: 0, restingHeartRate: 0, averageStressLevel: 0, allDayStress: undefined }))),
     'DI_CONNECT/DI-Connect-Aggregator/UDSFile_2026-06-13_2026-10-10.json': J(uds),
     'DI_CONNECT/DI-Connect-Fitness/user_summarizedActivities.json': J([{ summarizedActivitiesExport: activities }]),
     'DI_CONNECT/DI-Connect-Metrics/TrainingReadinessDTO_2026-06-13_2026-10-10.json': J(readiness),

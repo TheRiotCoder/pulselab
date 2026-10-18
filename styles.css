@@ -163,3 +163,4 @@ code { background: var(--card2); padding: 1px 5px; border-radius: 5px; font-size
 @media (prefers-reduced-motion: no-preference) { .meter i, .zbar i { transition: width .3s; } }
 
 .mt0{margin-top:0}.mt8{margin-top:8px}.mt12{margin-top:12px}.pad10{padding:10px 0}.big{font-size:20px;font-weight:800}.tiles.flush{margin:8px 0 0}
+.card h3.small { margin: 12px 0 4px; }

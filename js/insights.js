@@ -8,7 +8,7 @@ const MIN_N = 14;
 // Deviation from the trailing 60-day baseline. HRV uses ln scale (geometric mean), so the % is a ratio.
 const devPct = (d, k) => {
   if (!valid(d[k]) || !d['b_' + k]) return null;
-  if (k === 'hrv') return d.hrv > 0 ? (Math.exp(Math.log(d.hrv) - d.b_hrv.mean) - 1) * 100 : null;
+  if (k === 'hrv') return d.hrv > 0 && !d.hrvCoarse ? (Math.exp(Math.log(d.hrv) - d.b_hrv.mean) - 1) * 100 : null;
   return (d[k] - d['b_' + k].mean) / d['b_' + k].mean * 100;
 };
 const devAbs = (d, k) => (valid(d[k]) && d['b_' + k]) ? d[k] - d['b_' + k].mean : null;

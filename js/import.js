@@ -43,11 +43,11 @@ function sniff(items) {
   if ('activityId' in o && ('startTimeGmt' in o || 'startTimeLocal' in o || 'beginTimestamp' in o)) return 'activities';
   if ('sleepStartTimestampGMT' in o || 'deepSleepSeconds' in o) return 'sleep';
   if (Array.isArray(o.metrics) && o.calendarDate) return 'health';
-  if ('recoveryTime' in o && 'score' in o) return 'readiness';
+  if (('recoveryTime' in o && 'score' in o) || ('hrvWeeklyAverage' in o && ('score' in o || 'level' in o || 'recoveryTime' in o))) return 'readiness';
   if ('vo2MaxValue' in o) return 'vo2';
   if ('acuteTrainingLoad' in o || 'dailyTrainingLoadAcute' in o) return 'load';
   if (('lastNightAvg' in o || 'hrvWeeklyAverage' in o || 'weeklyAvg' in o) && o.calendarDate) return 'hrv';
-  if ('totalSteps' in o || 'restingHeartRate' in o || 'averageStressLevel' in o || 'bodyBattery' in o || 'bodyBatteryHighestValue' in o) return 'uds';
+  if ('totalSteps' in o || 'restingHeartRate' in o || 'averageStressLevel' in o || 'allDayStress' in o || 'totalAverageStressLevel' in o || 'bodyBattery' in o || 'bodyBatteryHighestValue' in o) return 'uds';
   return null;
 }
 
@@ -57,14 +57,30 @@ function bbStat(o, type) {
   if (!Array.isArray(l)) return null;
   const x = l.find(s => s.bodyBatteryStatType === type); return x ? num(x.statsValue) : null;
 }
+// Stress: top-level averageStressLevel, else the nested allDayStress.aggregatorList (TOTAL / ASLEEP entries), else totalAverageStressLevel.
+// Garmin uses 0 / negative numbers for "no data", so only positive values count.
+export function stressOf(o) {
+  const pos = v => { v = num(v); return v != null && v > 0 ? v : null; };
+  const list = o.allDayStress && Array.isArray(o.allDayStress.aggregatorList) ? o.allDayStress.aggregatorList : [];
+  const by = t => list.find(a => a && String(a.type || '').toUpperCase() === t);
+  const tot = by('TOTAL'), asl = by('ASLEEP');
+  return {
+    avg: pos(o.averageStressLevel) ?? (tot ? pos(tot.averageStressLevel) : null) ?? pos(o.totalAverageStressLevel),
+    max: pos(o.maxStressLevel) ?? (tot ? pos(tot.maxStressLevel) : null),
+    asleep: asl ? pos(asl.averageStressLevel) : null
+  };
+}
 function doUds(items, rep) {
   let n = 0;
   for (const o of items) {
     const date = calDate(o.calendarDate); if (!date) continue;
-    const stress = num(o.averageStressLevel);
     const rhr = num(o.restingHeartRate);
+    const st = stressOf(o);
+    const rs = o.respiration && typeof o.respiration === 'object' ? o.respiration : {};
+    const posn = v => { v = num(v); return v > 0 ? v : null; };
     const patch = {
-      steps: num(o.totalSteps), rhr: rhr > 0 ? rhr : null, stress: stress >= 0 ? stress : null,
+      steps: num(o.totalSteps), rhr: rhr > 0 ? rhr : null, stress: st.avg, stressMax: st.max, sleepStress: st.asleep,
+      spo2Day: posn(o.averageSpo2Value), spo2DayLow: posn(o.lowestSpo2Value), respDay: posn(o.avgWakingRespirationValue ?? rs.avgWakingRespirationValue),
       bbHigh: num(o.bodyBatteryHighestValue) ?? bbStat(o, 'HIGHEST'), bbLow: num(o.bodyBatteryLowestValue) ?? bbStat(o, 'LOWEST'),
       bbCharged: num(o.bodyBatteryChargedValue) ?? bbStat(o, 'CHARGED'), bbDrained: num(o.bodyBatteryDrainedValue) ?? bbStat(o, 'DRAINED'),
       bbWake: bbStat(o, 'SLEEPEND') ?? num(o.bodyBatteryAtWakeTime),
@@ -76,6 +92,7 @@ function doUds(items, rep) {
   }
   return n;
 }
+const pos0 = v => { v = num(v); return v != null && v > 0 ? v : null; };
 function doSleep(items, rep) {
   let n = 0;
   for (const o of items) {
@@ -87,11 +104,14 @@ function doSleep(items, rep) {
     const prev = S.daily.get(date);
     if (prev && prev.sleepMin && prev.sleepMin > dur && prev.src && prev.src.includes('sleep')) continue; // keep the main sleep, not a nap
     const sc = o.sleepScores || {};
+    const sp = o.spo2SleepSummary || o.spo2Summary || {};
+    const spo2 = { avg: pos0(sp.averageSPO2 ?? sp.averageSpO2 ?? sp.avg), low: pos0(sp.lowestSPO2 ?? sp.lowest) };
     mergeDaily(date, {
       sleepMin: dur, deepMin: deep != null ? deep / 60 : null, lightMin: light != null ? light / 60 : null, remMin: rem != null ? rem / 60 : null,
       awakeMin: awake != null ? awake / 60 : null, sleepStart: st, sleepEnd: en,
       sleepScoreG: num(sc.overallScore) ?? num(o.sleepScore) ?? null, resp: num(o.averageRespiration), sleepStress: num(o.avgSleepStress),
-      hrv: num(o.avgOvernightHrv)
+      hrvSleep: num(o.avgOvernightHrv) > 0 ? num(o.avgOvernightHrv) : null, // fallback only: the model prefers health-status HRV
+      sleepSpo2: spo2.avg, sleepSpo2Low: spo2.low, respLow: pos0(o.lowestRespiration), respHigh: pos0(o.highestRespiration)
     }, 'sleep'); n++; rep.dates.push(date);
   }
   return n;
@@ -112,7 +132,11 @@ function doHealth(items, rep) {
 }
 function doReadiness(items, rep) {
   let n = 0;
-  for (const o of items) { const date = calDate(o.calendarDate || o.timestamp); const sc = num(o.score); if (!date || sc == null) continue; mergeDaily(date, { garminReadiness: sc }, 'readiness'); n++; rep.dates.push(date); }
+  for (const o of items) {
+    const date = calDate(o.calendarDate || o.timestamp); const sc = num(o.score), wk = pos0(o.hrvWeeklyAverage);
+    if (!date || (sc == null && wk == null)) continue;
+    mergeDaily(date, { garminReadiness: sc, hrvWeekly: wk }, 'readiness'); n++; rep.dates.push(date);
+  }
   return n;
 }
 function doVo2(items, rep) {
@@ -127,7 +151,7 @@ function doLoad(items, rep) {
 }
 function doHrv(items, rep) {
   let n = 0;
-  for (const o of items) { const date = calDate(o.calendarDate); const v = num(o.lastNightAvg ?? o.lastNight ?? o.hrvValue); if (!date || v == null) continue; mergeDaily(date, { hrv: v }, 'hrv'); n++; rep.dates.push(date); }
+  for (const o of items) { const date = calDate(o.calendarDate); const v = pos0(o.lastNightAvg ?? o.lastNight ?? o.hrvValue), wk = pos0(o.hrvWeeklyAverage ?? o.weeklyAvg); if (!date || (v == null && wk == null)) continue; mergeDaily(date, { hrv: v, hrvWeekly: wk }, 'hrv'); n++; rep.dates.push(date); }
   return n;
 }
 
@@ -278,6 +302,15 @@ async function routeFile(u8, name, rep, depth, onProgress) {
   rep.ignored++;
 }
 
+export function ingestJson(u8, name, rep) { return handleJson(u8, name, rep); } // used by unit tests
+
+// How much HRV the whole dataset holds, by source (nightly health-status/HRV records, sleep-file average, coarse weekly average).
+export function hrvInventory() {
+  const c = { nightly: 0, sleep: 0, weekly: 0 };
+  for (const d of S.daily.values()) { if (d.hrv > 0) c.nightly++; else if (d.hrvSleep > 0) c.sleep++; if (d.hrvWeekly > 0) c.weekly++; }
+  return c;
+}
+
 export async function importFiles(fileList, onProgress) {
   const rep = { excluded: 0, files: 0, zips: 0, zipEntries: 0, found: {}, fileCounts: {}, ignored: 0, skipped: [], notes: [], dates: [], fitSeen: 0, fitSkipped: 0 };
   const wasDemo = S.meta.demo;
@@ -298,7 +331,7 @@ export async function importFiles(fileList, onProgress) {
   const total = Object.values(rep.found).reduce((a, b) => a + b, 0);
   const ds = rep.dates.sort();
   rep.range = ds.length ? { from: ds[0], to: ds[ds.length - 1] } : null;
-  rep.total = total; rep.at = Date.now(); rep.dates = undefined;
+  rep.total = total; rep.at = Date.now(); rep.dates = undefined; rep.hrv = hrvInventory();
   S.meta.demo = false;
   S.meta.imports = [...(S.meta.imports || []).slice(-9), { at: rep.at, files: files.map(f => f.name).slice(0, 5), found: rep.found, range: rep.range }];
   onProgress && onProgress('Saving…', 0.97);

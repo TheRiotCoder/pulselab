@@ -48,6 +48,7 @@ All charts are hand-written SVG, tappable/draggable (a readout shows exact value
 
 * Everything is parsed and stored **on-device in IndexedDB**. Nothing is uploaded; there is no server component.
 * The page ships a strict Content-Security-Policy (`script-src 'self'`, `connect-src 'self'`, no inline script or style, `form-action 'none'`, `frame-ancestors 'none'` via headers) so the app *cannot* contact other origins. The only requests it makes are for its own static files.
+* PulseLab has **no Web Worker**: unzipping and parsing run on the page's main thread (so there is no separate worker script to police). The only worker is the service worker `sw.js`, covered by `worker-src 'self'`. The `/*` rule in `_headers` sends the CSP (and the other security headers) on **every** response, including `/js/*.js`, `/sw.js` and the vendored library; this is verified with `curl` after each deploy.
 * No Garmin credentials are requested or stored. Hosting headers also set `nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, a restrictive `Permissions-Policy`, and no-cache for `index.html`/`sw.js` (see `_headers`).
 * **Backups are unencrypted JSON** containing all your health data; store them privately.
 * The only third-party code is [fflate](https://github.com/101arrowz/fflate) (MIT, vendored in `vendor/`) for unzipping.
@@ -55,7 +56,7 @@ All charts are hand-written SVG, tappable/draggable (a readout shows exact value
 ## Install
 
 * **Android (Chrome):** open the live link → *Install* banner (or ⋮ → Install app).
-* **iPhone/iPad (Safari):** open the link → Share → **Add to Home Screen** → Add. Installing also protects your stored data from Safari's storage clean-up.
+* **iPhone/iPad (Safari):** open the link → Share → **Add to Home Screen** → Add. Installing helps protect your stored data from Safari's storage clean-up, but it can still be cleared, so take a **backup** (Data tab) now and then. PulseLab shows this hint on iPhone/iPad Safari when it isn't installed.
 * **Desktop:** Chrome/Edge install icon in the address bar.
 
 After the first load it works fully offline. Updates show an "Update available" banner (Data → *Check for update*).
@@ -96,5 +97,6 @@ Deploy (Cloudflare Pages): `./build-dist.sh dist && wrangler pages deploy dist -
 
 ## Changelog
 
+* **1.1.1** – Importer fixes: stress read from nested `allDayStress.aggregatorList` (TOTAL/ASLEEP) and `totalAverageStressLevel`; later duplicate/zero daily records can no longer overwrite earlier steps/calories/intensity (or resting HR); explicit "No HRV found in this export" notes (import summary, Overview, Heart); HRV fallbacks (sleep-file `avgOvernightHrv` fills gaps; coarse weekly `hrvWeeklyAverage` from Training Readiness only when no nightly HRV, clearly labelled, no single-night flags); sleep SpO₂ / respiration read and charted on the Sleep view; iPhone install hint mentions backups.
 * **1.1.0** – Physiology/wording review: ln(HRV) baselines; HRV readiness factor scores the 7-night average; stress scored vs your own baseline; recovery timing fixed (effect starts +1 day; "Morning of" is a baseline check); illness-like flag needs 2+ consecutive days (single night = worth watching) with care advice; load wording/thresholds aligned (1.3); TRIMP labelled approximate; max HR estimated from data with confirm/override; sleep-stage accuracy note; multiple-comparison caveat; softer 48 h wording.
 * **1.0.0** – Initial release.

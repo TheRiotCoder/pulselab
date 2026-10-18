@@ -68,6 +68,14 @@ function build() {
     const date = addDays(first, i); const d = { ...(S.daily.get(date) || {}), date, i, ms: dayMs(date) };
     d.has = S.daily.has(date); days.push(d); byDate.set(date, d);
   }
+  // HRV source selection: nightly health-status/HRV values win; the sleep file's avgOvernightHrv fills gaps; a coarse weekly average
+  // (Training Readiness) is used only when no nightly HRV exists at all, and is flagged so no single-night analysis is done on it.
+  const nHrv = days.filter(d => d.hrv > 0).length, nSleepHrv = days.filter(d => !(d.hrv > 0) && d.hrvSleep > 0).length, nWeekly = days.filter(d => d.hrvWeekly > 0).length;
+  let hrvKind = nHrv ? 'nightly' : nSleepHrv ? 'sleep' : nWeekly ? 'weekly' : 'none';
+  for (const d of days) {
+    if (!(d.hrv > 0) && d.hrvSleep > 0) { d.hrv = d.hrvSleep; d.hrvFrom = 'sleep'; }
+    else if (hrvKind === 'weekly' && d.hrvWeekly > 0) { d.hrv = d.hrvWeekly; d.hrvCoarse = true; d.hrvFrom = 'weekly'; }
+  }
   const rest = S.settings.restHrOverride || median(days.map(d => d.rhr)) || 60;
   const mhEst = estimateMaxHr();
   const maxHr = S.settings.maxHr || (mhEst && mhEst.value) || 190;
@@ -105,9 +113,9 @@ function build() {
     const x = k === 'hrv' ? (v > 0 ? Math.log(v) : null) : v; if (x == null) return null;
     return (x - b.mean) / floorOf(k, b);
   };
-  const model = { days, byDate, acts, first, last, rest, maxHr, maxHrSource, maxHrEst: mhEst, base, zOf, floorOf, actsByDay };
+  const model = { hrvKind, hrvSleepFilled: nHrv ? nSleepHrv : 0, days, byDate, acts, first, last, rest, maxHr, maxHrSource, maxHrEst: mhEst, base, zOf, floorOf, actsByDay };
   days.forEach((d, i) => {
-    for (const k of BASE_KEYS) d['z_' + k] = zOf(k, d[k], i);
+    for (const k of BASE_KEYS) d['z_' + k] = (k === 'hrv' && d.hrvCoarse) ? null : zOf(k, d[k], i); // no single-night z on a weekly average
     const b = base.hrv.b60[i]; d.z7_hrv = b && valid(d.ma7_lnHrv) ? (d.ma7_lnHrv - b.mean) / floorOf('hrv', b) : null; // 7-night average vs baseline (scored)
   });
   // sleep timing

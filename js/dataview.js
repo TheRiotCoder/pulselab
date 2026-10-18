@@ -23,6 +23,13 @@ export function reportHtml(rep) {
   } else h += `<p>I read ${rep.files} file(s) but none looked like Garmin health or activity data. Make sure you chose the .zip from Garmin’s “Export Your Data” (or its .json / .fit / .csv files).</p>`;
   h += `<p class="sub">${rep.files} file(s) read${rep.zips ? ` inside ${rep.zips} zip(s) (${fmtNum(rep.zipEntries)} entries)` : ''}; ${rep.ignored} not relevant (ignored)${rep.excluded ? `; ${rep.excluded} in account/profile/support folders deliberately not read` : ''}.</p>`;
   if (!rep.found.sleep && !rep.found.uds && ok) h += `<p class="small warnc">No sleep or daily-summary files were found, so the Sleep, Heart and Stress views will be empty. Garmin’s export request can include “Health & Wellness” data. Request it again with everything ticked.</p>`;
+  if (ok && rep.hrv) {
+    const hv = rep.hrv;
+    if (!hv.nightly && !hv.sleep && !hv.weekly) h += `<p class="small warnc" id="rep-hrv"><b>No HRV found in this export.</b> HRV-based views, flags and the readiness HRV factor will be skipped. (Nightly HRV lives in <code>healthStatusData*.json</code>; some watches or exports don’t include it.)</p>`;
+    else if (!hv.nightly && !hv.sleep) h += `<p class="small warnc" id="rep-hrv"><b>Only coarse weekly HRV found</b> (${fmtNum(hv.weekly)} day(s) of Garmin’s <code>hrvWeeklyAverage</code> from Training Readiness). No nightly HRV, so single-night HRV flags are off.</p>`;
+    else if (!hv.nightly) h += `<p class="small" id="rep-hrv">HRV: no health-status HRV found; using the sleep file’s overnight average (<code>avgOvernightHrv</code>) for ${fmtNum(hv.sleep)} night(s).</p>`;
+    else if (hv.sleep) h += `<p class="small" id="rep-hrv">HRV: ${fmtNum(hv.nightly)} night(s) from health-status data, plus ${fmtNum(hv.sleep)} filled from the sleep file’s overnight average.</p>`;
+  }
   if (rep.notes.length) h += `<ul class="summary-list">${rep.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>`;
   if (rep.skipped.length) h += `<details><summary class="small">${rep.skipped.length} file(s) skipped</summary><ul class="summary-list small">${rep.skipped.slice(0, 30).map(s => `<li>${esc(s)}</li>`).join('')}</ul></details>`;
   return h + `</div>`;

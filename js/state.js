@@ -43,11 +43,14 @@ export async function flush() {
   S.version++;
 }
 
+// Cumulative daily counters: a later duplicate record (Garmin files overlap) must never lower them, in particular a later 0 must not erase an earlier real value.
+const CUMULATIVE = new Set(['steps', 'calories', 'distM', 'floors', 'intMod', 'intVig']);
 export function mergeDaily(date, patch, src, demo = false) {
   let d = S.daily.get(date);
   if (!d) { d = { date }; S.daily.set(date, d); }
   for (const [k, v] of Object.entries(patch)) {
     if (v === null || v === undefined || (typeof v === 'number' && !isFinite(v))) continue;
+    if (CUMULATIVE.has(k) && typeof v === 'number' && typeof d[k] === 'number' && d[k] > 0 && v < d[k]) continue;
     d[k] = v;
   }
   if (src) { d.src = d.src || []; if (!d.src.includes(src)) d.src.push(src); }

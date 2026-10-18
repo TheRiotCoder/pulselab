@@ -110,7 +110,7 @@ function showInstall(kind) {
   const d = document.createElement('div'); d.className = 'banner install'; d.setAttribute('role', 'region'); d.setAttribute('aria-label', 'Install');
   d.innerHTML = kind === 'android'
     ? `<b>Install PulseLab</b> for offline use and a home-screen icon.<div class="row"><button class="btn small" data-install>Install</button><button class="btn small secondary" data-dismiss-install>Not now</button></div>`
-    : `<b>Install on iPhone:</b> tap the <b>Share</b> button in Safari, choose <b>Add to Home Screen</b>, then <b>Add</b>. This also stops Safari from clearing your stored data.<div class="row"><button class="btn small secondary" data-dismiss-install>Got it</button></div>`;
+    : `<b>Install on iPhone:</b> tap the <b>Share</b> button in Safari, choose <b>Add to Home Screen</b>, then <b>Add</b>. This helps stop Safari clearing your stored data (it can still happen), so also take a <b>backup</b> in the Data tab now and then.<div class="row"><button class="btn small secondary" data-dismiss-install>Got it</button></div>`;
   $('#banners').append(d);
 }
 const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent);

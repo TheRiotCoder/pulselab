@@ -4,7 +4,7 @@ import { S, mergeDaily, upsertActivity } from '../js/state.js';
 import { model, readiness, estimateMaxHr, bandOf, ACWR_HIGH } from '../js/analysis.js';
 import { computeInsights } from '../js/insights.js';
 import { parseFit, fitToActivity } from '../js/fit.js';
-import { parseCsv } from '../js/import.js';
+import { parseCsv, ingestJson, stressOf, hrvInventory } from '../js/import.js';
 import { pearsonP, correlate, addDays } from '../js/util.js';
 import { buildFit } from './fixtures.mjs';
 
@@ -150,5 +150,59 @@ t('max HR is estimated from the 99th percentile of activity HR; manual override 
 });
 t('wording: soften 48 h advice', () => {
   recoveryData(1); const I = computeInsights(model(), 0); const s2 = I.suggestions.find(x => /48 h/.test(x.text)); assert(!s2 || /may suit your pattern/.test(s2.text));
+});
+
+// ---- importer fixes ----
+const feed = (obj, name = 'x.json') => { const rep = { found: {}, fileCounts: {}, ignored: 0, skipped: [], notes: [], dates: [] }; ingestJson(new TextEncoder().encode(JSON.stringify(obj)), name, rep); return rep; };
+const mkRep = () => ({ found: {}, fileCounts: {}, ignored: 0, skipped: [], notes: [], dates: [] });
+t('stress: nested allDayStress.aggregatorList (TOTAL/ASLEEP) is read; 0/-1 mean no data', () => {
+  reset();
+  const rep = feed([{ calendarDate: '2026-05-01', totalSteps: 8000, allDayStress: { aggregatorList: [{ type: 'AWAKE', averageStressLevel: 50 }, { type: 'TOTAL', averageStressLevel: 37, maxStressLevel: 88 }, { type: 'ASLEEP', averageStressLevel: 21 }] } },
+    { calendarDate: '2026-05-02', allDayStress: { aggregatorList: [{ type: 'TOTAL', averageStressLevel: 44 }] } }, // no steps etc: still recognised as a daily summary
+    { calendarDate: '2026-05-03', totalSteps: 100, averageStressLevel: -1, allDayStress: { aggregatorList: [{ type: 'TOTAL', averageStressLevel: -1 }] }, totalAverageStressLevel: 29 },
+    { calendarDate: '2026-05-04', totalSteps: 100, averageStressLevel: 0 }]);
+  assert(rep.found.uds === 4, JSON.stringify(rep.found));
+  const g = k => S.daily.get(k);
+  assert(g('2026-05-01').stress === 37 && g('2026-05-01').stressMax === 88 && g('2026-05-01').sleepStress === 21);
+  assert(g('2026-05-02').stress === 44); assert(g('2026-05-03').stress === 29, 'totalAverageStressLevel fallback'); assert(g('2026-05-04').stress == null, '0 = no data');
+  assert(stressOf({ averageStressLevel: 25, allDayStress: { aggregatorList: [{ type: 'TOTAL', averageStressLevel: 40 }] } }).avg === 25, 'top-level wins');
+});
+t('duplicate day records: a later zero (or smaller partial) never lowers cumulative fields', () => {
+  reset();
+  feed([{ calendarDate: '2026-05-01', totalSteps: 9000, restingHeartRate: 55, totalKilocalories: 2300, moderateIntensityMinutes: 20 }]);
+  feed([{ calendarDate: '2026-05-01', totalSteps: 0, restingHeartRate: 0, totalKilocalories: 0, moderateIntensityMinutes: 0 }]);
+  feed([{ calendarDate: '2026-05-01', totalSteps: 4000, restingHeartRate: 57 }]);
+  const d = S.daily.get('2026-05-01'); assert(d.steps === 9000 && d.calories === 2300 && d.intMod === 20 && d.rhr === 57, JSON.stringify(d));
+  feed([{ calendarDate: '2026-05-01', totalSteps: 11000 }]); assert(S.daily.get('2026-05-01').steps === 11000, 'larger values still win');
+  reset(); feed([{ calendarDate: '2026-05-02', totalSteps: 0 }]); feed([{ calendarDate: '2026-05-02', totalSteps: 5000 }]); assert(S.daily.get('2026-05-02').steps === 5000, 'zero first then real');
+});
+function hrvDataset(kind) {
+  reset();
+  const sl = (d, extra) => ({ calendarDate: d, sleepStartTimestampGMT: d + 'T01:00:00.0', sleepEndTimestampGMT: d + 'T08:00:00.0', deepSleepSeconds: 4000, lightSleepSeconds: 14000, remSleepSeconds: 6000, ...extra });
+  const days = [...Array(30)].map((_, i) => addDays('2026-05-01', i));
+  if (kind === 'none') { feed(days.map(d => sl(d, {}))); feed(days.map((d, i) => ({ calendarDate: d, totalSteps: 8000, restingHeartRate: 55 + (i % 3) }))); }
+  if (kind === 'sleep') feed(days.map((d, i) => sl(d, { avgOvernightHrv: 50 + (i % 5) })));
+  if (kind === 'weekly') { feed(days.map(d => sl(d, {}))); feed(days.map((d, i) => ({ calendarDate: d, score: 70, level: 'HIGH', recoveryTime: 600, hrvWeeklyAverage: 60 + Math.floor(i / 7) }))); }
+  if (kind === 'mixed') { feed(days.map((d, i) => sl(d, { avgOvernightHrv: 40 }))); feed(days.slice(0, 20).map(d => ({ calendarDate: d, metrics: [{ type: 'HRV', value: 70 }] }))); }
+  return model();
+}
+t('HRV: none found → explicit hrvKind "none", inventory zero, analysis still works', () => {
+  const m = hrvDataset('none'); assert(m.hrvKind === 'none'); const h = hrvInventory(); assert(h.nightly + h.sleep + h.weekly === 0);
+  assert(m.days.every(d => !(d.hrv > 0))); computeInsights(m, 0); assert(m.days[29].readiness, 'readiness still computed from other factors');
+});
+t('HRV fallback 1: sleep-file avgOvernightHrv used when no health-status HRV', () => {
+  const m = hrvDataset('sleep'); assert(m.hrvKind === 'sleep' && hrvInventory().sleep === 30 && m.days[3].hrv === 53 && !m.days[3].hrvCoarse);
+});
+t('HRV: health-status HRV wins over the sleep-file value; sleep fills only gaps', () => {
+  const m = hrvDataset('mixed'); assert(m.hrvKind === 'nightly' && m.days[5].hrv === 70 && m.days[25].hrv === 40 && m.hrvSleepFilled === 10, `${m.days[5].hrv} ${m.days[25].hrv} ${m.hrvSleepFilled}`);
+});
+t('HRV fallback 2: weekly average from TrainingReadiness is coarse, labelled, and drives no single-night flags', () => {
+  const m = hrvDataset('weekly'); assert(m.hrvKind === 'weekly' && hrvInventory().weekly === 30 && m.days[10].hrvCoarse === true && m.days[10].hrv === 61);
+  assert(m.days.every(d => d.z_hrv == null), 'no single-night z on a weekly average'); const I = computeInsights(m, 0); assert(I.strain.length === 0 && I.watch.length === 0);
+  assert(S.daily.get('2026-05-02').garminReadiness === 70, 'readiness score still imported');
+});
+t('sleep SpO2 / respiration range fields are read', () => {
+  reset(); feed([{ calendarDate: '2026-05-01', sleepStartTimestampGMT: '2026-05-01T01:00:00.0', sleepEndTimestampGMT: '2026-05-01T08:00:00.0', deepSleepSeconds: 4000, lightSleepSeconds: 14000, remSleepSeconds: 6000, averageRespiration: 14.5, lowestRespiration: 11, highestRespiration: 19, spo2SleepSummary: { averageSPO2: 95, lowestSPO2: 88 } }]);
+  const d = S.daily.get('2026-05-01'); assert(d.resp === 14.5 && d.respLow === 11 && d.respHigh === 19 && d.sleepSpo2 === 95 && d.sleepSpo2Low === 88, JSON.stringify(d));
 });
 console.log(`\n${pass} unit tests passed`);

@@ -33,6 +33,15 @@ function emptyState(root, ctx) {
 }
 function wk(days, f) { return weekly(days, f); }
 
+// Explicit statement about where HRV came from (or that none exists), shown on Overview and Heart.
+function hrvNote(m) {
+  if (m.empty) return '';
+  if (m.hrvKind === 'none') return `<p class="disclaimer" id="hrv-note"><b>No HRV found in this export.</b> HRV (and the readiness HRV factor, HRV baseline and HRV-based flags) is skipped. It normally comes from the health-status files (<code>healthStatusData*.json</code>) or the sleep files; not every watch or export includes it. Readiness uses the remaining factors.</p>`;
+  if (m.hrvKind === 'weekly') return `<p class="disclaimer" id="hrv-note"><b>Only a coarse weekly HRV was found.</b> Nightly HRV isn’t in this export, so the HRV shown is Garmin’s weekly average from Training Readiness (<code>hrvWeeklyAverage</code>). It changes slowly and can’t show single-night changes, so HRV flags and HRV correlations are turned off.</p>`;
+  if (m.hrvKind === 'sleep' || m.hrvSleepFilled) return `<p class="small muted" id="hrv-note">HRV for ${m.hrvKind === 'sleep' ? 'all nights' : m.hrvSleepFilled + ' night(s) without health-status HRV'} comes from the sleep file’s overnight average (<code>avgOvernightHrv</code>).</p>`;
+  return '';
+}
+
 // ============ OVERVIEW ============
 export function overview(root, ctx) {
   const m = ctx.m; if (m.empty) return emptyState(root, ctx);
@@ -62,7 +71,7 @@ export function overview(root, ctx) {
   const dst = lastV('stress'); t.push(tile('Stress', dst ? fmtNum(dst.stress) : '–', deltaHtml(avgOf(w1, 'stress'), avgOf(w0, 'stress'), false, v => fmtNum(v, 0))));
   const dp = lastV('steps'); t.push(tile('Steps', dp ? fmtNum(dp.steps) : '–', deltaHtml(avgOf(w1, 'steps'), avgOf(w0, 'steps'), true, v => fmtNum(v, 0))));
   const la = latestWith(m, d => valid(d.acwr)); t.push(tile('Load ratio', la ? la.acwr.toFixed(2) : '–', la ? (la.acwr > ACWR_HIGH ? '<span class="warnc">rose quickly</span>' : la.acwr >= ACWR_LOW ? '<span class="ok">balanced</span>' : 'below usual') : 'needs 4 weeks of workouts'));
-  html += `<div class="tiles">${t.join('')}</div>`;
+  html += `<div class="tiles">${t.join('')}</div>` + hrvNote(m);
   const latestAct = m.acts[m.acts.length - 1];
   if (latestAct) html += card('Latest activity', `<ul class="list">${actRow(latestAct)}</ul>`, '<a href="#/activity" class="small">All →</a>');
   const ins = computeInsights(m, S.range);
@@ -92,7 +101,11 @@ export function sleep(root, ctx) {
   html += card('Duration trend', `${legend([['c1', 'Nightly'], ['c3', '7-night average']])}<div id="c-dur"></div>`);
   html += card('Bedtime & wake time', `<div class="sub">Consistency matters as much as length. Times are shown in this device’s time zone.</div>${legend([['c4', 'Bedtime'], ['c3', 'Wake']])}<div id="c-bed"></div>`);
   html += card('Sleep debt, explained', `<p class="small">Sleep debt = sum over the last 7 recorded nights of how far each night fell short of your ${fmtDur(need)} need (change it in Data → Settings). Longer nights don’t cancel it out here, because recovery isn’t perfectly symmetrical. Currently <b>${debt.nights ? fmtDur(debt.debt) : 'unknown'}</b> over ${debt.nights} nights${debt.surplus ? `, with ${fmtDur(debt.surplus)} of surplus on other nights` : ''}.</p>`);
+  const nResp = days.filter(d => valid(d.resp)).length, nSp = days.filter(d => valid(d.spo2) || valid(d.sleepSpo2)).length;
+  if (nResp >= 5 || nSp >= 5) html += card('Overnight breathing & SpO₂', `<div class="sub">From your export where present (sleep and health-status files). Wrist SpO₂ is a rough estimate. Treat it as a trend, not a medical reading.</div>${nResp >= 5 ? `<h3 class="small">Respiration (breaths/min), n=${nResp}</h3><div id="c-resp"></div>` : ''}${nSp >= 5 ? `<h3 class="small">SpO₂ (%), n=${nSp}</h3><div id="c-spo2"></div>` : ''}`);
   root.innerHTML = html;
+  if (nResp >= 5) slot(root, 'c-resp', lineChart({ series: [{ name: 'Respiration', cls: 'c2', pts: pts(days, d => d.resp), fmt: v => fmtNum(v, 1) + ' br/min', dots: true }], aria: 'Overnight respiration rate' }));
+  if (nSp >= 5) slot(root, 'c-spo2', lineChart({ series: [{ name: 'SpO₂', cls: 'c1', pts: pts(days, d => valid(d.spo2) ? d.spo2 : d.sleepSpo2), fmt: v => fmtNum(v, 0) + ' %', dots: true }], aria: 'Overnight SpO2' }));
   let bars;
   if (agg) bars = wk(days, w => w).map(b => { const ws = b.days.filter(d => valid(d.sleepMin)); if (ws.length < 2) return null; const f = k => mean(ws.map(d => d[k] ?? 0)) / 60; return { ms: b.ms, label: 'Week of ' + fmtDay(b.start), segs: [{ v: f('deepMin'), cls: 'deep', name: 'Deep' }, { v: f('remMin'), cls: 'rem', name: 'REM' }, { v: f('lightMin') || (mean(ws.map(d => d.sleepMin)) / 60 - f('deepMin') - f('remMin')), cls: 'light', name: 'Light' }, { v: f('awakeMin'), cls: 'awake', name: 'Awake' }] }; }).filter(Boolean);
   else bars = days.filter(d => valid(d.sleepMin)).map(d => ({ ms: d.ms, segs: valid(d.deepMin) ? [{ v: d.deepMin / 60, cls: 'deep', name: 'Deep' }, { v: d.remMin / 60, cls: 'rem', name: 'REM' }, { v: d.lightMin / 60, cls: 'light', name: 'Light' }, { v: (d.awakeMin || 0) / 60, cls: 'awake', name: 'Awake' }] : [{ v: d.sleepMin / 60, cls: 'light', name: 'Asleep' }] }));
@@ -107,8 +120,8 @@ export function heart(root, ctx) {
   const m = ctx.m; if (m.empty) return emptyState(root, ctx);
   const days = ctx.days;
   const has = k => days.some(d => valid(d[k]));
-  if (!has('rhr') && !has('hrv')) { root.innerHTML = card('Heart', '<p class="muted">No resting HR or HRV in this range. Import the UDSFile_*.json and healthStatusData*.json files from your export.</p>'); return; }
-  let html = '';
+  if (!has('rhr') && !has('hrv')) { root.innerHTML = card('Heart', hrvNote(m) + '<p class="muted">No resting HR or HRV in this range. Import the UDSFile_*.json and healthStatusData*.json files from your export.</p>'); return; }
+  let html = hrvNote(m);
   const spec = [['rhr', 'Resting heart rate', 'bpm', 'c5', false], ['hrv', 'Heart-rate variability (overnight)', 'ms', 'c2', true]];
   const flagged = [];
   for (const [k, title, unit, cls, goodUp] of spec) {
