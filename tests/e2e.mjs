@@ -117,6 +117,10 @@ await goto('#/insights');
 const cards = await page.$$eval('.insight', c => c.length); ok(cards >= 3, 'insight cards present (' + cards + ')');
 const itxt = await text('#view'); ok(/n=\d+/.test(itxt) && /Not medical advice/i.test(itxt), 'insights show n and the not-medical-advice notice');
 ok(/confidence/.test(itxt), 'confidence labels');
+ok(/with several comparisons, one may look significant by chance/i.test(itxt), 'multiple-comparisons caveat shown');
+ok(!/Same AM/.test(itxt) && !/should fit your pattern/.test(itxt), 'no "Same AM" effect label and no overconfident 48 h wording');
+ok(/Morning of \(before the session\)/.test(itxt) && /(mornings? after the session|following mornings)/i.test(itxt), 'recovery card: morning-of is a baseline check, effect starts +1 day');
+ok(!/injur/i.test(itxt), 'no injury-risk wording on insights');
 await page.evaluate(() => document.querySelector('details[data-sc] summary').click()); await sleep(250);
 ok(await page.$('details[data-sc] svg') !== null, 'correlation scatter opens');
 ok(/Unusual readings/.test(itxt) && /Weekly summary/.test(itxt) && /Trends/.test(itxt), 'weekly summary, anomalies, trends sections');
@@ -135,8 +139,14 @@ await goto('#/data'); await page.select('#s-theme', 'dark'); await sleep(200);
 for (const v of ['overview', 'heart', 'activity', 'insights']) { await goto('#/' + v); await shot('dark-' + v); }
 ok(await page.evaluate(() => getComputedStyle(document.body).backgroundColor) === 'rgb(11, 17, 23)', 'dark theme applied');
 await goto('#/data');
+const mhint = await text('#maxhint'); ok(/estimated at \d+ bpm/.test(mhint) && await page.$('#useest') !== null && await page.$eval('#s-max', e => e.value === ''), 'max HR starts as auto: estimate + source shown, input blank, confirm button offered');
+await page.click('#useest'); await sleep(500);
+ok(await page.evaluate(async () => { const s = (await import('/js/state.js')).S.settings; return s.maxHr > 150 && s.maxHrConfirmed === true; }), '"Use this estimate" stores and confirms max HR');
+await page.$eval('#s-max', e => { e.value = ''; e.dispatchEvent(new Event('change')); }); await sleep(300);
+ok(await page.evaluate(async () => (await import('/js/state.js')).S.settings.maxHr) === null, 'clearing max HR returns to auto');
 await page.$eval('#s-max', e => { e.value = '175'; e.dispatchEvent(new Event('change')); }); await sleep(300);
 ok(await page.evaluate(async () => (await import('/js/state.js')).S.settings.maxHr) === 175, 'max HR setting persists');
+ok(await page.evaluate(async () => (await import('/js/state.js')).S.settings.maxHrConfirmed) === true, 'manual max HR counts as confirmed');
 await page.$eval('#s-max', e => { e.value = '188'; e.dispatchEvent(new Event('change')); }); await sleep(200);
 
 console.log('\n[7] PWA: service worker, manifest, offline reload');
@@ -165,7 +175,7 @@ await page.evaluate(() => navigator.serviceWorker.getRegistration().then(r => r.
 ok(await waitFor(() => !!document.querySelector('.banner.update'), 12000), 'update banner appears when a new service worker is waiting');
 await page.evaluate(() => document.querySelector('[data-update]').click());
 await page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 15000 }).catch(() => { }); await sleep(600);
-ok(await page.evaluate(async () => (await caches.keys()).some(n => n === 'pulselab-v9.9.9') && !(await caches.keys()).some(n => n === 'pulselab-v1.0.0')), 'update activates new cache and removes the old one');
+ok(await page.evaluate(async () => (await caches.keys()).some(n => n === 'pulselab-v9.9.9') && !(await caches.keys()).some(n => n === 'pulselab-v1.1.0')), 'update activates new cache and removes the old one');
 srv.swVersion = null;
 
 console.log('\n[9] CSP / no network');

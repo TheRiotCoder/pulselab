@@ -1,11 +1,16 @@
 // Plain-language insights computed from the user's own data. Every insight states its sample size (n)
 // and is withheld when there is not enough data. These are statistical associations, not medical advice.
 import { S } from './state.js';
-import { inRange, sleepDebt, sdMinutes } from './analysis.js';
+import { inRange, sleepDebt, sdMinutes, bandOf, ACWR_HIGH, ACWR_LOW } from './analysis.js';
 import { correlate, mean, median, quantile, valid, sd, fmtDur, fmtNum, fmtDay, fmtClock, trend, clamp } from './util.js';
 
 const MIN_N = 14;
-const devPct = (d, k) => (valid(d[k]) && d['b_' + k]) ? (d[k] - d['b_' + k].mean) / d['b_' + k].mean * 100 : null;
+// Deviation from the trailing 60-day baseline. HRV uses ln scale (geometric mean), so the % is a ratio.
+const devPct = (d, k) => {
+  if (!valid(d[k]) || !d['b_' + k]) return null;
+  if (k === 'hrv') return d.hrv > 0 ? (Math.exp(Math.log(d.hrv) - d.b_hrv.mean) - 1) * 100 : null;
+  return (d[k] - d['b_' + k].mean) / d['b_' + k].mean * 100;
+};
 const devAbs = (d, k) => (valid(d[k]) && d['b_' + k]) ? d[k] - d['b_' + k].mean : null;
 const sgn = (v, dp = 1) => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(dp);
 
@@ -116,19 +121,28 @@ export function computeInsights(m, range = S.range) {
     const hard = th ? days.filter(d => d.trimp >= th) : [];
     if (hard.length < 6) out.insufficient.push({ id: 'recovery', title: 'Recovery after hard days', insufficient: true, n: hard.length, need: 6, hint: 'Needs at least 6 “hard” days (top quarter of your training load) with HRV or resting HR data in the selected range.' });
     else {
+      // Garmin dates sleep/HRV by WAKE date: HRV on date D is the night BEFORE D's workout. So lag 0 is a pre-session
+      // baseline check; the first night that can reflect the session is +1 day.
       const lags = [0, 1, 2, 3, 4].map(L => {
         const hv = hard.map(h => m.days[h.i + L]).filter(Boolean).map(d => devPct(d, 'hrv')).filter(valid);
         const rh = hard.map(h => m.days[h.i + L]).filter(Boolean).map(d => devAbs(d, 'rhr')).filter(valid);
         return { L, hrv: hv.length >= 4 ? median(hv) : null, rhr: rh.length >= 4 ? median(rh) : null, n: Math.max(hv.length, rh.length) };
       });
-      const l1 = lags[1], worst = lags.filter(l => l.hrv != null).sort((a, b) => a.hrv - b.hrv)[0];
-      let back = lags.slice(1).find(l => l.hrv != null && l.hrv >= -2);
+      const pre = lags[0], l1 = lags[1];
+      const eff = lags.slice(1).filter(l => l.hrv != null);
+      const worst = eff.slice().sort((a, b) => a.hrv - b.hrv)[0];
+      const back = lags.slice(2).find(l => l.hrv != null && l.hrv >= -2 && (!worst || l.L > worst.L));
+      const whenTxt = L => L === 1 ? 'the first morning after the session' : `${L} mornings after the session`;
       let text = `After your hardest days (top quarter of training load, n=${hard.length}), `;
-      if (worst && worst.hrv < -3) text += `HRV was typically ${sgn(worst.hrv)}% vs baseline ${worst.L === 0 ? 'that same morning' : worst.L === 1 ? 'the next morning' : worst.L + ' mornings later'}` + (back && back.L > worst.L ? ` and was back near baseline by morning +${back.L}.` : '.');
+      if (worst && worst.hrv < -3) text += `HRV was typically ${sgn(worst.hrv)}% vs baseline ${whenTxt(worst.L)}` + (back ? ` and was back near baseline by +${back.L} days.` : '.');
       else text += 'your HRV did not drop noticeably below baseline on the following mornings, suggesting you recover well from these sessions (or the data is too noisy to tell).';
       if (l1.rhr != null) text += ` Resting HR the next day: ${sgn(l1.rhr)} bpm vs baseline.`;
-      out.cards.push({ id: 'recovery', title: 'Recovery after hard days', n: hard.length, conf: worst && worst.hrv < -3 && hard.length >= 12 ? 'moderate' : 'low', text, bars: lags.filter(l => l.hrv != null).map(l => ({ label: l.L === 0 ? 'Same AM' : '+' + l.L + 'd', v: l.hrv })), barsLabel: 'Median HRV vs baseline (%) by morning after a hard day',
-        how: `Hard day = training load ≥ the 75th percentile of your training days (${fmtNum(th, 0)} TRIMP). Medians shown; days with fewer than 4 readings are omitted. Hard days that cluster together blur this effect.` });
+      if (pre.hrv != null && pre.hrv < -3) text += ` Note: you tended to start these sessions already ${Math.abs(pre.hrv).toFixed(0)}% below baseline, so part of any later dip may predate the session.`;
+      const bars = [];
+      if (pre.hrv != null) bars.push({ label: 'Morning of (before the session)', v: pre.hrv });
+      for (const l of lags.slice(1)) if (l.hrv != null) bars.push({ label: '+' + l.L + ' day' + (l.L > 1 ? 's' : ''), v: l.hrv });
+      out.cards.push({ id: 'recovery', title: 'Recovery after hard days', n: hard.length, conf: worst && worst.hrv < -3 && hard.length >= 12 ? 'moderate' : 'low', text, bars, barsLabel: 'Median HRV vs baseline (%). “Before” is the night before the session (Garmin dates HRV by wake date), shown only as a baseline check; the effect starts at +1 day.',
+        how: `Hard day = training load ≥ the 75th percentile of your training days (${fmtNum(th, 0)} approx. TRIMP). HRV is dated by wake date, so the HRV on a session’s date is from the night before the session; +1 day is the first night after it. HRV deviations are on the ln scale (shown as %). Medians; lags with fewer than 4 readings are omitted. Hard days that cluster together blur this effect.` });
       out.recovery = lags;
     }
   }
@@ -154,17 +168,27 @@ export function computeInsights(m, range = S.range) {
     };
   }
 
-  // Anomalies in the last 14 days (z-score vs 60-day trailing baseline)
+  // Anomalies in the last 14 days (z-score vs 60-day trailing baseline; HRV on the ln scale)
   {
     const recent = m.days.slice(-14);
     const specs = [['hrv', 'HRV', v => fmtNum(v) + ' ms'], ['rhr', 'Resting HR', v => fmtNum(v) + ' bpm'], ['sleepMin', 'Sleep', v => fmtDur(v)], ['stress', 'Stress', v => fmtNum(v)], ['steps', 'Steps', v => fmtNum(v)]];
     for (const d of recent) for (const [k, label, f] of specs) {
       const z = d['z_' + k]; if (z == null || Math.abs(z) < 2) continue;
-      const b = d['b_' + k];
-      out.anomalies.push({ date: d.date, metric: label, value: f(d[k]), base: f(b.mean), z, n: b.n, dir: z > 0 ? 'high' : 'low' });
+      const b = d['b_' + k]; const baseVal = k === 'hrv' ? Math.exp(b.mean) : b.mean;
+      out.anomalies.push({ date: d.date, metric: label, value: f(d[k]), base: f(baseVal), z, n: b.n, dir: z > 0 ? 'high' : 'low' });
     }
     out.anomalies.sort((a, b) => b.date.localeCompare(a.date) || Math.abs(b.z) - Math.abs(a.z));
-    out.strain = recent.filter(d => d.z_hrv != null && d.z_rhr != null && d.z_hrv <= -1.5 && d.z_rhr >= 1.5).map(d => d.date);
+    // "Strain pattern": HRV well below AND resting HR well above baseline on the same day (single-night z-scores).
+    // One day is only "worth watching"; the stronger warning needs 2+ consecutive days.
+    const hit = recent.map(d => d.z_hrv != null && d.z_rhr != null && d.z_hrv <= -1.5 && d.z_rhr >= 1.5);
+    out.strain = []; out.watch = []; out.strainRuns = [];
+    for (let i = 0; i < recent.length;) {
+      if (!hit[i]) { i++; continue; }
+      let j = i; while (j + 1 < recent.length && hit[j + 1]) j++;
+      const run = recent.slice(i, j + 1).map(d => d.date);
+      if (run.length >= 2) { out.strain.push(...run); out.strainRuns.push(run); } else out.watch.push(run[0]);
+      i = j + 1;
+    }
   }
 
   // Trends
@@ -190,12 +214,18 @@ export function computeInsights(m, range = S.range) {
     const sh = out.cards.find(c => c.id === 'sleep-hrv');
     if (sh && sh.conf !== 'low' && sh.r > 0) sg.push({ text: 'In your data, longer sleep goes with higher HRV. Protecting sleep the night before an important session may pay off for you.', basis: `Sleep→HRV, n=${sh.n}, ${sh.conf} confidence` });
     if (last && valid(last.acwr)) {
-      if (last.acwr > 1.5) sg.push({ text: `Your short-term training load is ${last.acwr.toFixed(2)}× your 4-week average, a fast ramp-up. Consider an easier day or two if you feel flat.`, basis: 'Acute:chronic load ratio' });
-      else if (last.acwr < 0.8) sg.push({ text: `Your recent training load (${last.acwr.toFixed(2)}× your 4-week average) is below your usual. That is fine for a recovery week; if it was unplanned, ease back in gradually.`, basis: 'Acute:chronic load ratio' });
+      if (last.acwr > ACWR_HIGH) sg.push({ text: `Your recent training load is ${last.acwr.toFixed(2)}× your 4-week average. Load that jumped quickly is associated with more fatigue, so consider an easier day or two if you feel flat. (Load is an approximate, heart-rate-based estimate.)`, basis: 'Acute:chronic load ratio' });
+      else if (last.acwr < ACWR_LOW) sg.push({ text: `Your recent training load (${last.acwr.toFixed(2)}× your 4-week average) is below your usual. That is fine for a recovery week; if it was unplanned, ease back in gradually.`, basis: 'Acute:chronic load ratio' });
     }
-    if (out.strain && out.strain.length) sg.push({ text: `On ${out.strain.map(d => fmtDay(d)).join(', ')} your HRV was well below and resting HR well above your norm at the same time. That pattern can accompany illness, poor sleep, alcohol, stress or heavy training. Consider taking it easy; if you feel unwell or it persists, talk to a clinician.`, basis: 'z-scores vs 60-day baseline' });
+    const care = 'This is not a diagnosis. Seek care for fever, chest pain, shortness of breath or fainting.';
+    if (out.strainRuns && out.strainRuns.length) {
+      const r = out.strainRuns[out.strainRuns.length - 1];
+      sg.push({ text: `Your HRV was well below and resting HR well above your norm together on ${r.length} consecutive days (${r.map(d => fmtDay(d)).join(', ')}). That pattern can accompany illness, poor sleep, alcohol, stress or heavy training. Consider easing off while it lasts. ${care}`, basis: 'z-scores vs 60-day baseline, 2+ consecutive days' });
+    } else if (out.watch && out.watch.length) {
+      sg.push({ text: `On ${out.watch.map(d => fmtDay(d)).join(', ')} your HRV was well below and resting HR well above your norm on a single night. That is worth watching, but one night is not a signal on its own (poor sleep, alcohol, a hard session or stress are common causes). ${care}`, basis: 'z-scores vs 60-day baseline, single night' });
+    }
     const rc = out.recovery && out.recovery[1];
-    if (rc && rc.hrv != null && rc.hrv < -5) sg.push({ text: `Your HRV usually dips about ${Math.abs(rc.hrv).toFixed(0)}% the morning after your hardest days. Spacing hard sessions at least 48 h apart should fit your pattern.`, basis: `Hard-day recovery, n=${rc.n}` });
+    if (rc && rc.hrv != null && rc.hrv < -5) sg.push({ text: `Your HRV usually dips about ${Math.abs(rc.hrv).toFixed(0)}% the morning after your hardest days. Spacing hard sessions at least 48 h apart may suit your pattern.`, basis: `Hard-day recovery, n=${rc.n}` });
     const st = out.trends.find(t => t.label === 'Steps');
     if (st && st.sig && !st.good) sg.push({ text: 'Your daily steps are trending down. Short walks are an easy way to reverse that.', basis: `Steps trend, n=${st.n}` });
     if (!sg.length) sg.push({ text: 'Nothing stands out right now. Keep logging; insights sharpen as more weeks of data accumulate.', basis: 'No rule triggered' });

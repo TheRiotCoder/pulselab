@@ -144,7 +144,7 @@ label.btn:focus-within, button:focus-visible, a:focus-visible, summary:focus-vis
 .insight p { margin: 6px 0; }
 .insight details summary { color: var(--accent); cursor: pointer; font-size: 13px; padding: 4px 0; }
 .disclaimer { font-size: 12.5px; color: var(--muted); border-left: 3px solid var(--warn); padding: 4px 10px; margin: 0 0 12px; background: var(--card); border-radius: 0 8px 8px 0; }
-.minibars .mbrow { display: grid; grid-template-columns: 62px 1fr 60px; gap: 6px; align-items: center; font-size: 12.5px; margin: 3px 0; }
+.minibars .mbrow { display: grid; grid-template-columns: 112px 1fr 56px; gap: 6px; align-items: center; font-size: 12.5px; margin: 3px 0; }
 .mbtrack { position: relative; height: 12px; background: var(--card2); border-radius: 6px; }
 .mbtrack::after { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--muted); }
 .mbbar { position: absolute; top: 1px; bottom: 1px; border-radius: 4px; } .mbbar.pos { background: var(--c2); } .mbbar.neg { background: var(--c5); }

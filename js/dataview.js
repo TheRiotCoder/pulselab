@@ -48,7 +48,7 @@ function exportDaily() {
 }
 function exportActs() {
   const m = model();
-  const lines = ['id,start_iso,type,name,duration_s,distance_m,avg_hr,max_hr,avg_power,calories,ascent_m,load_trimp'];
+  const lines = ['id,start_iso,type,name,duration_s,distance_m,avg_hr,max_hr,avg_power,calories,ascent_m,load_trimp_approx'];
   for (const a of m.acts) lines.push([csvCell(a.id, true), new Date(a.start).toISOString(), csvCell(a.type, true), csvCell(a.name, true), csvCell(Math.round(a.durationSec || 0)), csvCell(a.distanceM ? Math.round(a.distanceM) : ''), csvCell(a.avgHr ? Math.round(a.avgHr) : ''), csvCell(a.maxHr ? Math.round(a.maxHr) : ''), csvCell(a.avgPower ? Math.round(a.avgPower) : ''), csvCell(a.calories ? Math.round(a.calories) : ''), csvCell(a.ascentM ? Math.round(a.ascentM) : ''), Math.round(a.trimp)].join(','));
   download('pulselab-activities.csv', lines.join('\n') + '\n', 'text/csv');
 }
@@ -95,7 +95,7 @@ export function dataView(root, ctx) {
   <section class="card"><h2>Settings</h2>
     <div class="field"><label for="s-theme">Theme</label><select id="s-theme"><option value="auto">Auto</option><option value="dark">Dark</option><option value="light">Light</option></select></div>
     <div class="field"><label for="s-units">Distance units</label><select id="s-units"><option value="km">Kilometres</option><option value="mi">Miles</option></select></div>
-    <div class="field"><label for="s-max">Max heart rate (bpm)</label><input id="s-max" type="number" inputmode="numeric" min="120" max="230" value="${st.maxHr}"><div class="hint">Used for zones and training load. A common estimate is 220 − age; a hard-effort test is better.</div></div>
+    <div class="field"><label for="s-max">Max heart rate (bpm)</label><input id="s-max" type="number" inputmode="numeric" min="120" max="230" placeholder="auto" value="${st.maxHr ?? ''}"><div class="hint" id="maxhint"></div></div>
     <div class="field"><label for="s-rest">Resting HR override (bpm)</label><input id="s-rest" type="number" inputmode="numeric" min="30" max="100" placeholder="auto" value="${st.restHrOverride ?? ''}"><div class="hint">Leave blank to use the median of your recorded resting HR (currently ${m.rest ? Math.round(m.rest) : '–'}).</div></div>
     <div class="field"><label for="s-need">Sleep need (hours)</label><input id="s-need" type="number" inputmode="decimal" step="0.25" min="5" max="11" value="${st.sleepNeedH}"></div>
     <div class="field"><label for="s-sex">Training-load formula</label><select id="s-sex"><option value="m">Banister (male coefficients)</option><option value="f">Banister (female coefficients)</option></select></div>
@@ -108,6 +108,11 @@ export function dataView(root, ctx) {
     <div class="btns mt8"><button class="btn secondary small" id="upd">Check for update</button><button class="btn secondary small" id="priv">Privacy &amp; limits</button></div><div id="updmsg" class="small muted"></div></section>
   <section class="card"><h2>Delete</h2><p class="small mt0">Removes every day, activity, setting and import record stored by PulseLab on this device. The app itself stays installed.</p><button class="btn danger" id="wipe">Delete all my data</button></section>`;
   root.querySelector('#s-theme').value = st.theme; root.querySelector('#s-units').value = st.units; root.querySelector('#s-sex').value = st.sex;
+  const mh = root.querySelector('#maxhint'); const est = m.maxHrEst;
+  mh.innerHTML = st.maxHr ? `Using your value (${st.maxHrConfirmed ? 'confirmed' : 'set'}). Clear the box to go back to the automatic estimate${est ? ' (' + est.value + ' bpm)' : ''}.`
+    : est ? `Currently <b>estimated at ${est.value} bpm</b> from your highest sustained HR (99th percentile of ${fmtNum(est.n)} ${esc(est.unit)}). This usually sits a few bpm under your true max, so please confirm or enter your own. Zones and training load depend on it. <button class="btn secondary small" id="useest" type="button">Use ${est.value} bpm</button>`
+      : 'No heart-rate data yet; 190 bpm is a placeholder. Enter your own max HR (220 − age is a rough guide; a hard-effort test is better).';
+  const ue = root.querySelector('#useest'); if (ue) ue.onclick = async () => { S.settings.maxHr = est.value; S.settings.maxHrConfirmed = true; await saveSettings(); ctx.refreshChrome(); ctx.go('data'); };
   const prog = root.querySelector('#prog'), pbar = root.querySelector('#pbar'), ptxt = root.querySelector('#ptxt');
   const onProgress = (txt, frac) => { prog.hidden = false; ptxt.textContent = txt; if (frac != null) pbar.style.width = Math.round(frac * 100) + '%'; };
   root.querySelector('#file').addEventListener('change', async e => {
@@ -124,8 +129,8 @@ export function dataView(root, ctx) {
     try { const r = await restoreBackup(await f.text()); msg.innerHTML = `<span class="ok">Restored ${r.days} days and ${r.acts} activities.</span>`; ctx.refreshChrome(); ctx.go('overview'); } catch (err) { msg.innerHTML = `<span class="bad">${esc(err.message)}</span>`; }
     e.target.value = '';
   });
-  const num = (el, key, lo, hi, nullable) => el.addEventListener('change', async () => { let v = el.value === '' && nullable ? null : parseFloat(el.value); if (v != null && (!isFinite(v) || v < lo || v > hi)) { el.value = S.settings[key] ?? ''; return; } S.settings[key] = v; await saveSettings(); ctx.refreshChrome(); });
-  num(root.querySelector('#s-max'), 'maxHr', 120, 230); num(root.querySelector('#s-rest'), 'restHrOverride', 30, 100, true); num(root.querySelector('#s-need'), 'sleepNeedH', 5, 11);
+  const num = (el, key, lo, hi, nullable) => el.addEventListener('change', async () => { let v = el.value === '' && nullable ? null : parseFloat(el.value); if (v != null && (!isFinite(v) || v < lo || v > hi)) { el.value = S.settings[key] ?? ''; return; } S.settings[key] = v; if (key === 'maxHr') S.settings.maxHrConfirmed = v != null; await saveSettings(); ctx.refreshChrome(); });
+  num(root.querySelector('#s-max'), 'maxHr', 120, 230, true); num(root.querySelector('#s-rest'), 'restHrOverride', 30, 100, true); num(root.querySelector('#s-need'), 'sleepNeedH', 5, 11);
   for (const [id, key] of [['#s-theme', 'theme'], ['#s-units', 'units'], ['#s-sex', 'sex']]) root.querySelector(id).addEventListener('change', async e => { S.settings[key] = e.target.value; await saveSettings(); ctx.refreshChrome(); });
   root.querySelector('#wipe').onclick = async () => { if (await ctx.confirm('Delete all data?', 'This permanently deletes everything PulseLab stores on this device (days, activities, settings). Consider making a backup first. This cannot be undone.', 'Delete everything')) { await wipe(false); ctx.refreshChrome(); ctx.go('data'); } };
   root.querySelector('#upd').onclick = () => ctx.checkUpdate(root.querySelector('#updmsg'));

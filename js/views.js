@@ -1,6 +1,6 @@
 // View renderers. Each takes (root, ctx) and fills root. All imported strings are escaped.
 import { S, getSeries, hasData } from './state.js';
-import { model, inRange, latestWith, weekly, sleepDebt, ZONES, zonesOfActivity, zoneOf } from './analysis.js';
+import { model, inRange, latestWith, weekly, sleepDebt, ZONES, zonesOfActivity, zoneOf, bandOf, ACWR_HIGH, ACWR_LOW } from './analysis.js';
 import { computeInsights } from './insights.js';
 import { lineChart, barChart, scatter, miniBars, routeMap } from './charts.js';
 import { esc, fmtDay, fmtDayLong, fmtDur, fmtDurSec, fmtNum, fmtPace, fmtClock, mean, sd, median, valid, DAY, daysBetween, dayKey, sum, clamp } from './util.js';
@@ -10,7 +10,6 @@ const TYPE_CLS = { running: 'c1', cycling: 'c2', walking: 'c3', hiking: 'c6', st
 const TYPE_NAME = { running: 'Running', cycling: 'Cycling', walking: 'Walking', hiking: 'Hiking', swimming: 'Swimming', strength: 'Strength', rowing: 'Rowing', other: 'Other' };
 
 const BAND_K = 1.5; // normal band = 60-day mean ± 1.5 SD
-const bandW = (b, k) => BAND_K * Math.max(b.sd || 0, k === 'rhr' ? 1 : 0.04 * b.mean);
 const pts = (days, fn) => days.map(d => [d.ms, fn(d)]).filter(p => valid(p[1]));
 const rangeLabel = () => S.range ? 'last ' + (S.range === 365 ? 'year' : S.range + ' days') : 'all data';
 const distFmt = m => m == null ? '–' : S.settings.units === 'mi' ? (m / 1609.344).toFixed(2) + ' mi' : (m / 1000).toFixed(2) + ' km';
@@ -62,7 +61,7 @@ export function overview(root, ctx) {
   const dr = lastV('rhr'); t.push(tile('Resting HR', dr ? fmtNum(dr.rhr) : '–', deltaHtml(avgOf(w1, 'rhr'), avgOf(w0, 'rhr'), false, v => fmtNum(v, 1)), 'bpm'));
   const dst = lastV('stress'); t.push(tile('Stress', dst ? fmtNum(dst.stress) : '–', deltaHtml(avgOf(w1, 'stress'), avgOf(w0, 'stress'), false, v => fmtNum(v, 0))));
   const dp = lastV('steps'); t.push(tile('Steps', dp ? fmtNum(dp.steps) : '–', deltaHtml(avgOf(w1, 'steps'), avgOf(w0, 'steps'), true, v => fmtNum(v, 0))));
-  const la = latestWith(m, d => valid(d.acwr)); t.push(tile('Load ratio', la ? la.acwr.toFixed(2) : '–', la ? (la.acwr > 1.5 ? '<span class="bad">high ramp</span>' : la.acwr > 1.3 ? '<span class="warnc">elevated</span>' : la.acwr >= 0.8 ? '<span class="ok">balanced</span>' : 'below usual') : 'needs 4 weeks of workouts'));
+  const la = latestWith(m, d => valid(d.acwr)); t.push(tile('Load ratio', la ? la.acwr.toFixed(2) : '–', la ? (la.acwr > ACWR_HIGH ? '<span class="warnc">rose quickly</span>' : la.acwr >= ACWR_LOW ? '<span class="ok">balanced</span>' : 'below usual') : 'needs 4 weeks of workouts'));
   html += `<div class="tiles">${t.join('')}</div>`;
   const latestAct = m.acts[m.acts.length - 1];
   if (latestAct) html += card('Latest activity', `<ul class="list">${actRow(latestAct)}</ul>`, '<a href="#/activity" class="small">All →</a>');
@@ -89,7 +88,7 @@ export function sleep(root, ctx) {
   let html = `<div class="tiles">${tile('Average', fmtDur(avg), `need ${fmtDur(need)}`)}${tile('Sleep debt', debt.nights ? fmtDur(debt.debt) : '–', debt.nights ? `last ${debt.nights} nights` : '')}${tile('Bedtime ±', cons[0], cons[1])}
     ${tile('Deep', deepPct == null ? '–' : Math.round(deepPct) + '%', 'of sleep')}${tile('REM', remPct == null ? '–' : Math.round(remPct) + '%', 'of sleep')}${tile('Short nights', String(below), `of ${withSleep.length} (n)`)}</div>`;
   const agg = days.length > 120;
-  html += card('Nightly sleep stages', `<div class="sub">${agg ? 'Weekly averages' : 'Hours asleep by stage'} · ${esc(rangeLabel())} · n=${withSleep.length} nights</div>${legend([['deep', 'Deep'], ['rem', 'REM'], ['light', 'Light'], ['awake', 'Awake']])}<div id="c-stages"></div>`);
+  html += card('Nightly sleep stages', `<div class="sub">${agg ? 'Weekly averages' : 'Hours asleep by stage'} · ${esc(rangeLabel())} · n=${withSleep.length} nights. Wrist-device deep/REM stages are only roughly accurate, so read them as trends, not exact numbers.</div>${legend([['deep', 'Deep'], ['rem', 'REM'], ['light', 'Light'], ['awake', 'Awake']])}<div id="c-stages"></div>`);
   html += card('Duration trend', `${legend([['c1', 'Nightly'], ['c3', '7-night average']])}<div id="c-dur"></div>`);
   html += card('Bedtime & wake time', `<div class="sub">Consistency matters as much as length. Times are shown in this device’s time zone.</div>${legend([['c4', 'Bedtime'], ['c3', 'Wake']])}<div id="c-bed"></div>`);
   html += card('Sleep debt, explained', `<p class="small">Sleep debt = sum over the last 7 recorded nights of how far each night fell short of your ${fmtDur(need)} need (change it in Data → Settings). Longer nights don’t cancel it out here, because recovery isn’t perfectly symmetrical. Currently <b>${debt.nights ? fmtDur(debt.debt) : 'unknown'}</b> over ${debt.nights} nights${debt.surplus ? `, with ${fmtDur(debt.surplus)} of surplus on other nights` : ''}.</p>`);
@@ -118,24 +117,24 @@ export function heart(root, ctx) {
     const vals = days.filter(d => valid(d[k]));
     let status = 'Baseline needs ~2 weeks of data.';
     if (lastD) {
-      const b = lastD['b_' + k], lo = b.mean - bandW(b, k), hi = b.mean + bandW(b, k), v = lastD['ma7_' + k];
-      const pos = v < lo ? 'below' : v > hi ? 'above' : 'within';
+      const bd = bandOf(lastD['b_' + k], k, BAND_K), v = lastD['ma7_' + k];
+      const pos = v < bd.lo ? 'below' : v > bd.hi ? 'above' : 'within';
       const bad = (pos === 'below' && goodUp) || (pos === 'above' && !goodUp);
-      status = `Your 7-day average is <b>${fmtNum(v, 1)} ${unit}</b>, <b class="${pos === 'within' ? 'ok' : bad ? 'bad' : 'warnc'}">${pos} your normal range</b> (60-day baseline ${fmtNum(b.mean, 1)} ± ${fmtNum(bandW(b, k), 1)}, n=${b.n}).`;
+      status = `Your 7-day average is <b>${fmtNum(v, 1)} ${unit}</b>, <b class="${pos === 'within' ? 'ok' : bad ? 'bad' : 'warnc'}">${pos} your normal range</b> (60-day baseline ${fmtNum(bd.mid, 1)} ${unit}, normal band ${fmtNum(bd.lo, 0)}–${fmtNum(bd.hi, 0)}, n=${bd.n}${k === 'hrv' ? '; log scale' : ''}).`;
     }
-    const outside = vals.filter(d => d['b_' + k] && Math.abs(d[k] - d['b_' + k].mean) > bandW(d['b_' + k], k));
+    const outside = vals.filter(d => { const bd = bandOf(d['b_' + k], k, BAND_K); return bd && (d[k] < bd.lo || d[k] > bd.hi); });
     outside.forEach(d => flagged.push({ d, k, unit }));
-    html += card(title, `<p class="small mt0">${status}</p>${legend([[cls, 'Daily'], ['c3', '7-day average'], ['band', 'Normal band (60-day baseline ± 1.5 SD)']])}<div id="c-${k}"></div><p class="sub">${outside.length} of ${vals.filter(d => d['b_' + k]).length} days with a baseline fall outside the band (ringed in red). Even in a healthy pattern roughly 1 day in 8 lands outside a ±1.5 SD band; a shifted 7-day line matters more than a single day.</p>`);
+    html += card(title, `<p class="small mt0">${status}</p>${legend([[cls, 'Daily'], ['c3', '7-day average'], ['band', 'Normal band (60-day baseline ± 1.5 SD)']])}<div id="c-${k}"></div><p class="sub">${outside.length} of ${vals.filter(d => d['b_' + k]).length} days with a baseline fall outside the band (ringed in red). Even in a healthy pattern roughly 1 day in 8 lands outside a ±1.5 SD band; a shifted 7-day line matters more than a single day.${k === 'hrv' ? ' HRV baselines are computed on a log scale (a geometric mean), because HRV is skewed.' : ''}</p>`);
   }
   const fl = flagged.sort((a, b) => b.d.date.localeCompare(a.d.date)).slice(0, 8);
-  if (fl.length) html += card('Recent readings outside your band', `<ul class="summary-list">${fl.map(({ d, k, unit }) => { const b = d['b_' + k]; const z = d['z_' + k]; return `<li><b>${esc(fmtDay(d.date))}</b> ${k === 'hrv' ? 'HRV' : 'Resting HR'} ${fmtNum(d[k])} ${unit} vs ${fmtNum(b.mean, 0)} (z = ${z.toFixed(1)})</li>`; }).join('')}</ul><p class="sub">Common reasons: poor sleep, hard training, alcohol, illness, travel, stress. Not a diagnosis.</p>`);
+  if (fl.length) html += card('Recent readings outside your band', `<ul class="summary-list">${fl.map(({ d, k, unit }) => { const b = d['b_' + k]; const z = d['z_' + k]; return `<li><b>${esc(fmtDay(d.date))}</b> ${k === 'hrv' ? 'HRV' : 'Resting HR'} ${fmtNum(d[k])} ${unit} vs ${fmtNum(bandOf(b, k).mid, 0)} (z = ${z.toFixed(1)})</li>`; }).join('')}</ul><p class="sub">Common reasons: poor sleep, hard training, alcohol, illness, travel, stress. Not a diagnosis.</p>`);
   const ovn = days.filter(d => valid(d.ovnHr));
   if (ovn.length > 4) html += card('Overnight heart rate', `<div id="c-ovn"></div>`);
   root.innerHTML = html;
   for (const [k, , unit, cls] of spec) {
     if (!has(k)) continue;
     const band = { lo: [], hi: [] }; const fl2 = [];
-    for (const d of days) { const b = d['b_' + k]; if (!b) continue; const w = bandW(b, k); band.lo.push([d.ms, b.mean - w]); band.hi.push([d.ms, b.mean + w]); if (valid(d[k]) && Math.abs(d[k] - b.mean) > w) fl2.push({ x: d.ms, y: d[k] }); }
+    for (const d of days) { const bd = bandOf(d['b_' + k], k, BAND_K); if (!bd) continue; band.lo.push([d.ms, bd.lo]); band.hi.push([d.ms, bd.hi]); if (valid(d[k]) && (d[k] < bd.lo || d[k] > bd.hi)) fl2.push({ x: d.ms, y: d[k] }); }
     slot(root, 'c-' + k, lineChart({ series: [{ name: k === 'hrv' ? 'HRV' : 'RHR', cls, pts: pts(days, d => d[k]), dots: true, noLine: true, fmt: v => fmtNum(v, 0) + ' ' + unit }, { name: '7-day avg', cls: 'c3', pts: pts(days, d => d['ma7_' + k]), fmt: v => fmtNum(v, 1) + ' ' + unit }], band, flags: fl2, aria: title(k) }));
   }
   if (ovn.length > 4) slot(root, 'c-ovn', lineChart({ series: [{ name: 'Overnight HR', cls: 'c1', pts: pts(days, d => d.ovnHr), fmt: v => fmtNum(v, 0) + ' bpm' }], aria: 'Overnight heart rate' }));
@@ -170,17 +169,18 @@ export function activity(root, ctx) {
   const tot = { n: acts.length, sec: sum(acts.map(a => a.durationSec)), dist: sum(acts.map(a => a.distanceM)), load: sum(acts.map(a => a.trimp)) };
   let html = `<div class="tiles">${tile('Workouts', String(tot.n), esc(rangeLabel()))}${tile('Time', fmtDurSec(tot.sec).replace(/:\d\d$/, ''), 'h:mm')}${tile('Distance', S.settings.units === 'mi' ? fmtNum(tot.dist / 1609.344, 0) : fmtNum(tot.dist / 1000, 0), '', unitsLong())}</div>`;
   const hasLoad = days.some(d => d.trimp > 0);
+  if (m.maxHrSource !== 'manual') html += `<p class="disclaimer">Max HR is ${m.maxHrSource === 'estimated' ? `<b>estimated at ${m.maxHr} bpm</b> from your highest sustained heart rate (99th percentile of ${fmtNum(m.maxHrEst.n)} ${esc(m.maxHrEst.unit)}). It usually sits a few beats under your true max.` : `<b>unknown</b>; ${m.maxHr} bpm is a placeholder.`} Zones and load depend on it: <a href="#/data">confirm or set it in Settings</a>.</p>`;
   html += card('Weekly volume', `<div class="sub">Hours of training by type</div><div id="legend-vol"></div><div id="c-vol"></div>`);
   if (hasLoad) {
     const lastD = latestWith(m, d => valid(d.acwr));
-    html += card('Training load', `<div class="sub">TRIMP per day (Banister heart-rate method) with 7-day (acute) and 28-day (chronic) exponentially-weighted averages. Workouts without HR are estimated at a moderate effort.</div>${legend([['c1', 'Daily load'], ['c3', 'Acute (7d)'], ['c4', 'Chronic (28d)']])}<div id="c-load"></div>
-      <h3 class="mt12">Acute : chronic ratio ${lastD ? `<span class="badge ${lastD.acwr > 1.5 ? 'warn' : ''}">now ${lastD.acwr.toFixed(2)}</span>` : ''}</h3>
-      <div class="sub">Compares recent load with what you’re used to. 0.8–1.3 is a typical “sweet spot”; above ~1.5 means load is rising fast. Needs 4 weeks of workouts to be meaningful${lastD ? '' : ' (not enough yet)'}.</div><div id="c-acwr"></div>`);
+    html += card('Training load (approximate)', `<div class="sub">An approximate, heart-rate-based estimate (Banister TRIMP) that depends on your max and resting HR. Shown per day with 7-day (acute) and 28-day (chronic) exponentially-weighted averages. Workouts without HR are estimated at a moderate effort.</div>${legend([['c1', 'Daily load'], ['c3', 'Acute (7d)'], ['c4', 'Chronic (28d)']])}<div id="c-load"></div>
+      <h3 class="mt12">Acute : chronic ratio ${lastD ? `<span class="badge ${lastD.acwr > ACWR_HIGH ? 'warn' : ''}">now ${lastD.acwr.toFixed(2)}</span>` : ''}</h3>
+      <div class="sub">Compares recent load with what you’re used to. ${ACWR_LOW}–${ACWR_HIGH} is treated as balanced; above ${ACWR_HIGH} means load rose quickly, which is associated with more fatigue. Needs 4 weeks of workouts to be meaningful${lastD ? '' : ' (not enough yet)'}.</div><div id="c-acwr"></div>`);
   }
   const zs = [0, 0, 0, 0, 0]; let approxN = 0, zn = 0;
   for (const a of acts) { const z = zonesOfActivity(a, m.maxHr); if (z) { z.secs.forEach((s, i) => zs[i] += s); zn++; if (z.approx) approxN++; } }
   const zt = sum(zs);
-  if (zt > 0) html += card('Time in heart-rate zones', `<div class="sub">% of max HR (${m.maxHr} bpm; change in Data → Settings). ${approxN ? `${approxN} of ${zn} workouts have no second-by-second data, so each was counted entirely in the zone of its average HR (approximate).` : `From second-by-second data of ${zn} workouts.`}</div><div class="zbar" id="zbar">${zs.map((s, i) => `<i class="fl-z${i + 1}" data-w="${s / zt * 100}"></i>`).join('')}</div>
+  if (zt > 0) html += card('Time in heart-rate zones', `<div class="sub">% of max HR (${m.maxHr} bpm, ${m.maxHrSource}; change in Data → Settings). ${approxN ? `${approxN} of ${zn} workouts have no second-by-second data, so each was counted entirely in the zone of its average HR (approximate).` : `From second-by-second data of ${zn} workouts.`}</div><div class="zbar" id="zbar">${zs.map((s, i) => `<i class="fl-z${i + 1}" data-w="${s / zt * 100}"></i>`).join('')}</div>
     <table class="ztable">${ZONES.map((z, i) => `<tr><td><span class="rk fl-z${i + 1}"></span>${esc(z.name)}</td><td>${Math.round(z.lo * 100)}–${z.hi > 1 ? '100' : Math.round(z.hi * 100)}%</td><td>${fmtDurSec(zs[i]).replace(/:\d\d$/, '')} · ${Math.round(zs[i] / zt * 100)}%</td></tr>`).join('')}</table>`);
   const runs = acts.filter(a => ['running'].includes(a.type) && a.pace && a.durationSec >= 600 && a.distanceM >= 1500);
   if (runs.length >= 3) html += card('Running pace', `<div class="sub">Average pace per run (faster is higher on this chart) · n=${runs.length}</div><div id="c-pace"></div>`);
@@ -199,7 +199,7 @@ export function activity(root, ctx) {
   if (hasLoad) {
     slot(root, 'c-load', barChart({ bars: days.map(d => ({ ms: d.ms, segs: [{ v: d.trimp, cls: 'c1', name: 'Load' }] })), lines: [{ name: 'Acute', cls: 'c3', pts: pts(days, d => d.acute) }, { name: 'Chronic', cls: 'c4', pts: pts(days, d => d.chronic) }], valFmt: v => fmtNum(v, 0), aria: 'Daily training load with acute and chronic averages' }));
     const ap = pts(days, d => d.acwr);
-    slot(root, 'c-acwr', ap.length ? lineChart({ series: [{ name: 'ACWR', cls: 'c3', pts: ap, fmt: v => v.toFixed(2) }], band: { lo: ap.map(p => [p[0], 0.8]), hi: ap.map(p => [p[0], 1.3]) }, yMin: 0, yMax: Math.max(2, ...ap.map(p => p[1])), refs: [{ y: 1.5, label: '1.5' }], aria: 'Acute to chronic load ratio' }) : (() => { const e = document.createElement('div'); e.className = 'empty-chart'; e.textContent = 'Needs at least 28 days after your first workout.'; return e; })());
+    slot(root, 'c-acwr', ap.length ? lineChart({ series: [{ name: 'ACWR', cls: 'c3', pts: ap, fmt: v => v.toFixed(2) }], band: { lo: ap.map(p => [p[0], ACWR_LOW]), hi: ap.map(p => [p[0], ACWR_HIGH]) }, yMin: 0, yMax: Math.max(2, ...ap.map(p => p[1])), refs: [{ y: ACWR_HIGH, label: String(ACWR_HIGH) }], aria: 'Acute to chronic load ratio' }) : (() => { const e = document.createElement('div'); e.className = 'empty-chart'; e.textContent = 'Needs at least 28 days after your first workout.'; return e; })());
   }
   if (runs.length >= 3) slot(root, 'c-pace', lineChart({ series: [{ name: 'Pace', cls: 'c1', pts: runs.map(a => [a.start, a.pace]), dots: true, fmt: v => fmtPace(v, S.settings.units), thin: false }], invert: true, yFmt: v => fmtPace(v, S.settings.units).replace('/' + S.settings.units, ''), gapMs: 60 * DAY, extraTip: t => '', tipDate: ms => fmtDay(dayKey(ms)), aria: 'Running pace per run' }));
   if (rides.length >= 3) slot(root, 'c-pow', lineChart({ series: [{ name: 'Avg power', cls: 'c3', pts: rides.map(a => [a.start, a.avgPower]), dots: true, fmt: v => Math.round(v) + ' W' }], gapMs: 60 * DAY, tipDate: ms => fmtDay(dayKey(ms)), aria: 'Cycling power per ride' }));
@@ -222,7 +222,7 @@ export async function activityDetail(root, ctx, id) {
   let html = `<a class="back" href="#/activity">← Activities</a>
   <section class="card"><h2>${esc(a.name)}</h2><div class="sub">${esc(fmtDayLong(a.day))} · ${esc(TYPE_NAME[a.type] || a.type)}${a.demo ? ' · <b>demo data</b>' : ''}</div>
   <div class="tiles flush">${tile('Time', esc(fmtDurSec(a.durationSec)))}${tile('Distance', a.distanceM ? esc(distFmt(a.distanceM)) : '–')}${tile(isRun ? 'Pace' : 'Speed', isRun ? esc(fmtPace(a.pace, S.settings.units)) : a.speed ? fmtNum(a.speed * 3.6 / (S.settings.units === 'mi' ? 1.609344 : 1), 1) : '–', '', isRun ? '' : S.settings.units === 'mi' ? 'mph' : 'km/h')}
-  ${tile('Avg HR', a.avgHr ? Math.round(a.avgHr) : '–', '', 'bpm')}${tile('Max HR', a.maxHr ? Math.round(a.maxHr) : '–', '', 'bpm')}${tile('Load', Math.round(a.trimp), a.trimpEst ? 'estimated (no HR)' : 'TRIMP')}
+  ${tile('Avg HR', a.avgHr ? Math.round(a.avgHr) : '–', '', 'bpm')}${tile('Max HR', a.maxHr ? Math.round(a.maxHr) : '–', '', 'bpm')}${tile('Load (approx.)', Math.round(a.trimp), a.trimpEst ? 'estimated, no HR' : 'HR-based TRIMP')}
   ${a.avgPower ? tile('Avg power', Math.round(a.avgPower), '', 'W') : ''}${a.ascentM ? tile('Ascent', Math.round(a.ascentM), '', 'm') : ''}${a.calories ? tile('Calories', fmtNum(a.calories), '', 'kcal') : ''}</div></section>`;
   const z = zonesOfActivity(a, m.maxHr);
   if (z) { const t = sum(z.secs); html += card('Heart-rate zones', `<div class="zbar">${z.secs.map((s, i) => `<i class="fl-z${i + 1}" data-w="${s / t * 100}"></i>`).join('')}</div><table class="ztable">${ZONES.map((zz, i) => `<tr><td><span class="rk fl-z${i + 1}"></span>${esc(zz.name)}</td><td>${fmtDurSec(z.secs[i])}</td><td>${Math.round(z.secs[i] / t * 100)}%</td></tr>`).join('')}</table>${z.approx ? '<p class="sub">Approximate: only the average HR is known for this activity.</p>' : ''}`); }
@@ -253,14 +253,16 @@ export async function activityDetail(root, ctx, id) {
 export function insights(root, ctx) {
   const m = ctx.m; if (m.empty) return emptyState(root, ctx);
   const I = computeInsights(m, S.range);
-  let html = `<p class="disclaimer"><b>Not medical advice.</b> These are statistical patterns in your own data. They show association, not cause, and can be wrong. Every insight shows how many days (n) it rests on, and is hidden when there isn’t enough data. If something worries you, talk to a clinician.</p>`;
+  let html = `<p class="disclaimer"><b>Not medical advice.</b> These are statistical patterns in your own data. They show association, not cause, and can be wrong. Every insight shows how many days (n) it rests on, and is hidden when there isn’t enough data. With several comparisons, one may look significant by chance. If something worries you, talk to a clinician.</p>`;
   if (S.range && S.range < 30) html += `<p class="sub">Tip: you’re viewing ${S.range} days. Most insights need at least 14 matching days; try 90 days or more.</p>`;
   const W = I.weekly;
   if (W) html += card('Weekly summary', `<div class="sub">${esc(fmtDay(W.from))} – ${esc(fmtDay(W.to))} vs the 7 days before</div><table class="wk"><tr><th></th><th>This week</th><th>Last week</th></tr>${W.rows.map(r => { if (r.v == null) return `<tr><td>${esc(r.label)}</td><td colspan="2" class="muted">not enough data</td></tr>`; const good = r.goodUp == null || r.delta == null ? '' : ((r.delta > 0) === r.goodUp ? 'ok' : 'bad'); return `<tr><td>${esc(r.label)}</td><td><b>${esc(r.vtxt)}</b> ${r.delta != null && Math.abs(r.delta) > 1e-9 ? `<span class="${good}">${r.delta > 0 ? '▲' : '▼'}</span>` : ''}</td><td class="muted">${esc(r.ptxt || '–')}</td></tr>`; }).join('')}</table><p class="sub">Green/red arrows show whether the change is usually favourable. Averages need at least 3 days of data (n shown in tooltips of other views).</p>`);
   html += card('Suggestions', `<ul class="summary-list">${I.suggestions.map(s => `<li>${esc(s.text)} <span class="badge">${esc(s.basis)}</span></li>`).join('')}</ul>`);
-  html += `<section class="card"><h2>Patterns in your data</h2>${I.cards.length ? '' : '<p class="muted">No pattern has enough data in this range yet.</p>'}<div id="cards">${I.cards.map((c, i) => `<div class="insight" data-i="${i}"><div class="ih"><h3>${esc(c.title)}</h3><span><span class="badge ${c.conf}">${c.conf === 'higher' ? 'higher' : c.conf} confidence</span> <span class="badge">n=${c.n}</span></span></div><p>${esc(c.text)}</p>
+  html += `<section class="card"><h2>Patterns in your data</h2><p class="sub">With several comparisons, one may look significant by chance; trust patterns that repeat across ranges more than a single result.</p>${I.cards.length ? '' : '<p class="muted">No pattern has enough data in this range yet.</p>'}<div id="cards">${I.cards.map((c, i) => `<div class="insight" data-i="${i}"><div class="ih"><h3>${esc(c.title)}</h3><span><span class="badge ${c.conf}">${c.conf === 'higher' ? 'higher' : c.conf} confidence</span> <span class="badge">n=${c.n}</span></span></div><p>${esc(c.text)}</p>
     ${c.bars ? `<div class="sub">${esc(c.barsLabel)}</div><div data-bars="${i}"></div>` : ''}${c.scatter ? `<details data-sc="${i}"><summary>Show chart</summary><div></div></details>` : ''}<details><summary>How this was computed</summary><p class="small muted">${esc(c.how)}</p></details></div>`).join('')}</div></section>`;
-  html += card('Unusual readings (last 14 days)', I.anomalies.length ? `<ul class="summary-list">${I.anomalies.map(a => `<li><b>${esc(fmtDay(a.date))}</b>: ${esc(a.metric)} <b class="${a.dir === 'high' ? 'warnc' : 'warnc'}">${esc(a.value)}</b> (${a.dir}; baseline ${esc(a.base)}, z = ${a.z.toFixed(1)}, n=${a.n})</li>`).join('')}</ul><p class="sub">Flagged when a day sits 2 or more standard deviations from your trailing 60-day baseline. About 1 in 20 normal days will trigger this by chance.</p>` : '<p class="muted">Nothing unusual against your 60-day baseline (needs 14+ prior days of a metric).</p>');
+  html += card('Unusual readings (last 14 days)', I.anomalies.length ? `<ul class="summary-list">${I.anomalies.map(a => `<li><b>${esc(fmtDay(a.date))}</b>: ${esc(a.metric)} <b class="${a.dir === 'high' ? 'warnc' : 'warnc'}">${esc(a.value)}</b> (${a.dir}; baseline ${esc(a.base)}, z = ${a.z.toFixed(1)}, n=${a.n})</li>`).join('')}</ul><p class="sub">Flagged when a day sits 2 or more standard deviations from your trailing 60-day baseline (HRV on a log scale). About 1 in 20 normal days will trigger this by chance.</p>` : '<p class="muted">Nothing unusual against your 60-day baseline (needs 14+ prior days of a metric).</p>');
+  if (I.strainRuns && I.strainRuns.length) html += card('Strain pattern', `<p class="small mt0">HRV well below and resting HR well above your norm together on 2+ consecutive days (${esc(I.strainRuns.map(r => r.map(d => fmtDay(d)).join(', ')).join('; '))}). This can accompany illness, poor sleep, alcohol, stress or heavy training. Not a diagnosis. Seek care for fever, chest pain, shortness of breath or fainting.</p>`);
+  else if (I.watch && I.watch.length) html += card('Worth watching', `<p class="small mt0">On ${esc(I.watch.map(d => fmtDay(d)).join(', '))} HRV was well below and resting HR well above your norm on a single night. One night is not a signal on its own. Not a diagnosis. Seek care for fever, chest pain, shortness of breath or fainting.</p>`);
   html += card('Trends', `<table class="wk"><tr><th>Metric</th><th>Direction</th><th>n</th></tr>${I.trends.map(t => t.insufficient ? `<tr><td>${esc(t.label)}</td><td class="muted">not enough data</td><td>${t.n}</td></tr>` : `<tr><td>${esc(t.label)}</td><td>${t.sig ? `<b class="${t.good ? 'ok' : 'bad'}">${t.up ? '▲ rising' : '▼ falling'}</b> ${esc(Math.abs(t.slopeWeek).toFixed(t.dp === 0 ? 0 : 1))}${t.unit ? ' ' + esc(t.unit) : ''}/wk` : '<span class="muted">stable / no clear trend</span>'}</td><td>${t.n}</td></tr>`).join('')}</table><p class="sub">Linear trend over the selected range; “rising/falling” only when p &lt; 0.05 and |r| ≥ 0.2. Green = generally favourable.</p>`);
   if (I.insufficient.length) html += card('Not enough data yet', `<ul class="summary-list">${I.insufficient.map(c => `<li><b>${esc(c.title)}</b>: have n=${c.n}, need ${c.need}. <span class="muted">${esc(c.hint)}</span></li>`).join('')}</ul>`);
   root.innerHTML = html;

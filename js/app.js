@@ -84,7 +84,7 @@ async function render() {
   view.focus({ preventScroll: true });
 }
 function makeCtx(m) {
-  return { m, days: inRange(m, S.range), refreshChrome, confirm: confirmBox, privacy: privacyBox, checkUpdate, go: n => { location.hash = '#/' + n; if (route().name === n) render(); },
+  return { m, days: inRange(m, S.range), refreshChrome, confirm: confirmBox, privacy: privacyBox, checkUpdate, go: n => { location.hash = '#/' + n; if (route().name === n) render(); }, rerender: () => render(),
     afterImport: () => { }, };
 }
 

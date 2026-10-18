@@ -2,7 +2,7 @@
 import * as db from './db.js';
 import { dayKey } from './util.js';
 
-export const DEFAULTS = { maxHr: 190, restHrOverride: null, sleepNeedH: 7.5, sex: 'm', units: 'km', theme: 'auto' };
+export const DEFAULTS = { settingsVer: 2, maxHr: null /* null = auto-estimate */, maxHrConfirmed: false, restHrOverride: null, sleepNeedH: 7.5, sex: 'm', units: 'km', theme: 'auto' };
 export const S = {
   daily: new Map(),     // date -> day record
   acts: new Map(),      // id -> activity
@@ -20,6 +20,10 @@ export async function loadAll() {
   S.daily = new Map(daily.map(d => [d.date, d]));
   S.acts = new Map(acts.map(a => [a.id, a]));
   S.settings = { ...DEFAULTS, ...(settings || {}) };
+  if (!settings || settings.settingsVer !== 2) { // v1 stored the default 190 as if the user had chosen it
+    if (S.settings.maxHr === 190) S.settings.maxHr = null;
+    S.settings.settingsVer = 2;
+  }
   S.meta = { demo: false, imports: [], ...(meta || {}) };
   if (range) S.range = range;
   S.version++;

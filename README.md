@@ -36,9 +36,13 @@ All charts are hand-written SVG, tappable/draggable (a readout shows exact value
 
 ### The formulas (also explained in-app)
 
-* **Readiness** = weighted mean of the factors that are available (re-normalised): Sleep 35% (75% duration vs need + 25% deep+REM share), HRV 25% (70 + 22·z vs 60-day baseline), resting HR 20% (70 − 22·z), yesterday's stress 10%, training-load balance 10% (acute:chronic ratio, full marks 0.8–1.3). At least two factors are required.
-* **Training load** = Banister TRIMP per workout from average HR (workouts without HR are estimated at a moderate effort and flagged); acute = 7-day EWMA, chronic = 28-day EWMA; ratio shown after 4 weeks.
-* **Insights** use Pearson correlation with p-values on paired days (HRV/RHR as deviation from the trailing 60-day baseline). *Higher* confidence needs p<0.01, n≥30 and |r|≥0.45; *moderate* p<0.05 and |r|≥0.3; weaker is reported as "no reliable link". Minimum 14 paired days. Association ≠ cause.
+* **Baselines** are a rolling 60-day mean and SD. **HRV is handled as ln(HRV)** (baseline, SD and z-scores all on the log scale; the band on the chart is shown back in ms), because HRV is right-skewed. The SD has a floor so a very steady stretch doesn't make every reading look extreme.
+* **Readiness** = weighted mean of the factors that are available (re-normalised): Sleep 35% (75% duration vs need + 25% deep+REM share; wrist-device deep/REM stages are only roughly accurate), HRV 25% (70 + 22·z, scoring the **7-night average** vs baseline, not a single night), resting HR 20% (70 − 22·z), yesterday's stress 10% (scored against **your own** 60-day stress baseline, not a fixed scale), training-load balance 10% (acute:chronic ratio; full marks 0.8–1.3, the same 1.3 threshold the advice uses). At least two factors are required.
+* **Training load (approximate)** = Banister TRIMP per workout from average HR (workouts without HR are estimated at a moderate effort and flagged); acute = 7-day EWMA, chronic = 28-day EWMA; ratio shown after 4 weeks. Load that rose quickly is associated with more fatigue; it is not an injury predictor.
+* **Max HR** is estimated as the 99th percentile of heart rate across your activities (your highest *sustained* HR) when data exists. Data → Settings shows the estimate and asks you to confirm it or enter your own (blank = automatic). Without any HR data a 190 bpm placeholder is used.
+* **Single-night flags** (HRV z ≤ −1.5 *and* resting HR z ≥ 1.5) are "worth watching" only. The stronger "strain pattern" warning requires the pattern on **2+ consecutive days**. Neither is a diagnosis; seek care for fever, chest pain, shortness of breath or fainting.
+* **Recovery after hard days**: Garmin dates sleep/HRV by wake date, so the HRV on a session's date is from the night *before* it. That day is shown only as a baseline check ("Morning of (before the session)"); the effect starts at +1 day.
+* **Insights** use Pearson correlation with p-values on paired days (HRV as ln-deviation, RHR as absolute deviation from the trailing 60-day baseline). *Higher* confidence needs p<0.01, n≥30 and |r|≥0.45; *moderate* p<0.05 and |r|≥0.3; weaker is reported as "no reliable link". Minimum 14 paired days. With several comparisons, one may look significant by chance. Association ≠ cause.
 
 ## Privacy model
 
@@ -66,7 +70,8 @@ After the first load it works fully offline. Updates show an "Update available" 
 * Sleep/bedtime clock times are converted from Garmin's GMT timestamps into *this device's* time zone (if you travelled, times can be off; durations are right).
 * Garmin's "Activities" CSV has no distance unit, so km is assumed.
 * Readiness is **not** Garmin's Training Readiness (that algorithm is private; if it is in your export it is shown for comparison only).
-* Heart-rate zones/TRIMP need your max HR (default 190, set it in Data → Settings). Without HR, load is an estimate.
+* Heart-rate zones/TRIMP need your max HR: it is estimated from your data (usually a few bpm under your true max) until you confirm or set it in Data → Settings. TRIMP is approximate in any case (average-HR based; without HR, load is an estimate).
+* Wrist-device sleep stages (deep/REM) are only roughly accurate; the sleep score leans mostly on duration.
 * Insights are correlations on one person's data: they can be confounded (e.g. long runs happen on rested weekends) and are not medical advice. Anomaly flags will fire by chance about 1 day in 20.
 * Very large exports (hundreds of MB) are processed in the main thread on your phone; it may take a minute and use a lot of memory. If the browser kills the tab, import the files (e.g. just the Wellness + Aggregator + Fitness JSON) instead of the full zip.
 * Browsers may evict site storage under pressure; make backups.
@@ -88,3 +93,8 @@ Tests: `node tests/unit.mjs` and `PULSELAB_NODE_MODULES=/path/to/node_modules no
 Deploy (Cloudflare Pages): `./build-dist.sh dist && wrangler pages deploy dist --project-name pulselab --branch main`.
 
 *Demo data* (Data tab → "Load demo data") is fully synthetic, generated on-device from a fixed seed, and clearly bannered; importing real data removes it.
+
+## Changelog
+
+* **1.1.0** – Physiology/wording review: ln(HRV) baselines; HRV readiness factor scores the 7-night average; stress scored vs your own baseline; recovery timing fixed (effect starts +1 day; "Morning of" is a baseline check); illness-like flag needs 2+ consecutive days (single night = worth watching) with care advice; load wording/thresholds aligned (1.3); TRIMP labelled approximate; max HR estimated from data with confirm/override; sleep-stage accuracy note; multiple-comparison caveat; softer 48 h wording.
+* **1.0.0** – Initial release.

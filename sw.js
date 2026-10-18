@@ -1,5 +1,5 @@
 // PulseLab service worker: versioned precache, offline-first for app files, no network use for user data.
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const CACHE = 'pulselab-v' + VERSION;
 const ASSETS = ['./', 'styles.css', 'manifest.webmanifest',
   'js/app.js', 'js/util.js', 'js/db.js', 'js/state.js', 'js/fit.js', 'js/import.js', 'js/analysis.js', 'js/insights.js', 'js/charts.js', 'js/demo.js', 'js/views.js', 'js/dataview.js', 'js/version.js',

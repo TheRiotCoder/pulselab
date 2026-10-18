@@ -10,7 +10,6 @@ export async function loadDemo(days = 270) {
   const gauss = () => { let u = 0, v = 0; while (!u) u = r(); v = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
   const end = addDays(dayKey(new Date()), -1);
   const maxHr = 188, rest = 54, need = 7.5;
-  S.settings.maxHr = maxHr;
   let acuteF = 0, chronicF = 0, prevTrimp = 0, runCount = 0, vo2 = 46.5;
   const sleepHist = [];
   for (let i = days - 1; i >= 0; i--) {
